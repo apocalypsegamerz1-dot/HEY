@@ -12,7 +12,10 @@ import re
 import json
 from pathlib import Path
 import token_economy
+import os
+import streamlit as st
 
+st.write("KEY LOADED:", os.getenv("GEMINI_API_KEY_1") is not None)
 USERS_FILE = Path(__file__).resolve().parent / "users.json"
 
 
