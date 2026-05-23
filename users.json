@@ -1,0 +1,54 @@
+{
+    "Reyaansh Sharma": {
+        "id": "user_9d9770af",
+        "username": "Reyaansh Sharma",
+        "password": "12345",
+        "is_owner": true,
+        "tokens": 1000,
+        "last_claimed_date": "",
+        "friends": [],
+        "passkey": "139914",
+        "loans_given": [],
+        "loans_taken": [],
+        "daily_task_count": 0,
+        "daily_task_date": "",
+        "streak": 0,
+        "gifts_sent_today": 0,
+        "gift_reset_date": "",
+        "activity_log": [],
+        "task_history": [],
+        "loan_history": [],
+        "chats": [
+            {
+                "title": "Owner Chat",
+                "messages": []
+            }
+        ]
+    },
+    "demo": {
+        "id": "user_127908dc",
+        "username": "demo",
+        "password": "demo",
+        "is_owner": false,
+        "tokens": 1000,
+        "last_claimed_date": "",
+        "friends": [],
+        "passkey": "494468",
+        "loans_given": [],
+        "loans_taken": [],
+        "daily_task_count": 0,
+        "daily_task_date": "",
+        "streak": 0,
+        "gifts_sent_today": 0,
+        "gift_reset_date": "",
+        "activity_log": [],
+        "task_history": [],
+        "loan_history": [],
+        "chats": [
+            {
+                "title": "New Chat",
+                "messages": []
+            }
+        ]
+    }
+}

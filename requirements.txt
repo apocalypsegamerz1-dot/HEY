@@ -1,0 +1,7 @@
+streamlit>=1.28.0
+google-generativeai>=0.3.0
+requests
+Pillow>=9.0.0
+pyttsx3
+numpy
+gTTS>=2.3.0
