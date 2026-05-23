@@ -162,17 +162,17 @@ except Exception:
 
 API_KEY_SLOTS = [
     {
-        "key": "AIzaSyAbw6VbN-FOgzVAZZbzWNw-5-aiywtU1nc",
+        "key": "GEMINI_API_KEY_1",
         "name": "Primary",
         "model": "gemini-3.1-flash-lite",
     },
     {
-        "key": "AIzaSyAGFXGWHD5qA6CEvEAYUhjOSRSqRzw9I_Q",
+        "key": "GEMINI_API_KEY_2",
         "name": "Secondary",
         "model": "gemini-2.5-flash-lite",
     },
     {
-        "key": "AIzaSyDXxfwf-ckf1Je3KXbDSAZK4nCgQSL4p-A",
+        "key": "GEMINI_API_KEY_3",
         "name": "Tertiary",
         "model": "gemini-2.5-flash-lite",
     },
