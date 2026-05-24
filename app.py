@@ -37,6 +37,10 @@ supabase_client = None
 
 def is_supabase_configured():
     # Check env first, then Streamlit secrets
+    # If the supabase client import failed, treat as not configured
+    if create_client is None:
+        return False
+
     url = os.getenv("SUPABASE_URL")
     key = os.getenv("SUPABASE_KEY")
     if url and key:
@@ -127,6 +131,40 @@ def _supabase_load_accounts() -> list:
     except Exception:
         return []
 
+
+def _supabase_find_account_by_id(account_id: str):
+    if not account_id:
+        return None
+    try:
+        client = get_supabase_client()
+        resp = client.table("users").select("data").eq("id", str(account_id)).limit(1).execute()
+        rows = resp.data or []
+        if not rows:
+            return None
+        data = rows[0].get("data") if isinstance(rows[0], dict) else None
+        if isinstance(data, dict):
+            normalize_user_data(data)
+            return data
+    except Exception:
+        return None
+
+
+def _supabase_find_account_by_passkey(passkey: str):
+    if not passkey:
+        return None
+    try:
+        client = get_supabase_client()
+        resp = client.table("users").select("data").filter("data->>passkey", "eq", str(passkey)).limit(1).execute()
+        rows = resp.data or []
+        if not rows:
+            return None
+        data = rows[0].get("data") if isinstance(rows[0], dict) else None
+        if isinstance(data, dict):
+            normalize_user_data(data)
+            return data
+    except Exception:
+        return None
+
 import token_economy
 
 USERS_FILE = Path(__file__).resolve().parent / "users.json"
@@ -191,31 +229,6 @@ def save_users(users):
         return False
 
 
-def initialize_firebase():
-    # Firebase removed from this codebase; use Supabase or local JSON instead.
-    try:
-        st.session_state.backend_error = "Firebase support has been removed. Using Supabase/local storage."
-    except Exception:
-        pass
-    return None
-
-
-def get_firestore_client():
-    raise RuntimeError("Firebase has been removed from this application.")
-
-
-def get_users_collection():
-    raise RuntimeError("Firebase has been removed from this application.")
-
-
-def get_firebase_service_account_data():
-    # Firebase removed; no service account data available.
-    try:
-        st.session_state.backend_error = "Firebase service account support removed."
-    except Exception:
-        pass
-    return None
-
 
 def initialize_firebase():
     try:
@@ -261,19 +274,8 @@ def find_accounts_by_username(username: str) -> list:
             return accounts
         except Exception:
             accounts = []
-    db = initialize_firebase()
-    if db:
-        try:
-            query = get_users_collection().where("username", "==", username).stream()
-            for doc in query:
-                data = doc.to_dict()
-                if isinstance(data, dict):
-                    normalize_user_data(data)
-                    accounts.append(data)
-        except Exception:
-            pass
-    else:
-        accounts = [acc for acc in load_accounts() if acc.get("username", "").strip() == username]
+    # Fallback to local JSON storage
+    accounts = [acc for acc in load_accounts() if acc.get("username", "").strip() == username]
     return accounts
 
 
@@ -336,22 +338,7 @@ def load_accounts():
         if sup_accounts:
             return sup_accounts
 
-    db = initialize_firebase()
     accounts = []
-    if db:
-        try:
-            for doc in get_users_collection().stream():
-                data = doc.to_dict()
-                if isinstance(data, dict):
-                    normalize_user_data(data)
-                    try:
-                        token_economy.normalize_account(data, token_economy.settings)
-                    except Exception:
-                        pass
-                    accounts.append(data)
-            return accounts
-        except Exception:
-            pass
     for acc in load_users().values():
         if isinstance(acc, dict):
             normalize_user_data(acc)
@@ -371,14 +358,12 @@ def save_accounts(accounts):
                 success = False
         return success
 
-    db = initialize_firebase()
-    if db:
-        success = True
-        for acc in accounts:
-            if not save_firebase_user(acc):
-                success = False
-        return success
-    return save_users({acc.get("id", acc.get("username")): acc for acc in accounts if "username" in acc})
+    # Fallback to local JSON storage
+    try:
+        users = {acc.get("id", acc.get("username")): acc for acc in accounts if "username" in acc}
+        return save_users(users)
+    except Exception:
+        return False
 
 
 def persist_user(account):
@@ -387,16 +372,13 @@ def persist_user(account):
     if is_supabase_configured():
         success = _supabase_save_user(account)
     else:
-        db = initialize_firebase()
-        if db:
-            success = save_firebase_user(account)
-        else:
-            users = load_users()
-            key = account.get("id") or account.get("username")
-            if not key:
-                return False
-            users[str(key)] = account
-            success = save_users(users)
+        # Save to local JSON storage
+        users = load_users()
+        key = account.get("id") or account.get("username")
+        if not key:
+            return False
+        users[str(key)] = account
+        success = save_users(users)
     if success:
         st.session_state._cached_current_account = account
     return success
@@ -447,15 +429,11 @@ def propagate_request_update(accounts: list, updated_request: dict, request_type
 def find_account_by_id(account_id):
     if not account_id:
         return None
-    db = initialize_firebase()
-    if db:
+    if is_supabase_configured():
         try:
-            query = get_users_collection().where("id", "==", account_id).limit(1).stream()
-            for doc in query:
-                data = doc.to_dict()
-                if isinstance(data, dict):
-                    normalize_user_data(data)
-                    return data
+            acc = _supabase_find_account_by_id(account_id)
+            if acc:
+                return acc
         except Exception:
             pass
     return next((acc for acc in load_accounts() if acc.get("id") == account_id), None)
@@ -464,15 +442,11 @@ def find_account_by_id(account_id):
 def find_account_by_passkey(passkey):
     if not passkey:
         return None
-    db = initialize_firebase()
-    if db:
+    if is_supabase_configured():
         try:
-            query = get_users_collection().where("passkey", "==", str(passkey).strip()).limit(1).stream()
-            for doc in query:
-                data = doc.to_dict()
-                if isinstance(data, dict):
-                    normalize_user_data(data)
-                    return data
+            acc = _supabase_find_account_by_passkey(passkey)
+            if acc:
+                return acc
         except Exception:
             pass
     return next((acc for acc in load_accounts() if str(acc.get("passkey")) == str(passkey).strip()), None)
