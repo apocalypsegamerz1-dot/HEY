@@ -10,7 +10,19 @@ from datetime import datetime
 from PIL import Image
 import re
 import json
+import uuid
 from pathlib import Path
+try:
+    import bcrypt
+except ImportError:
+    bcrypt = None
+try:
+    import firebase_admin
+    from firebase_admin import credentials, firestore
+except ImportError:
+    firebase_admin = None
+    credentials = None
+    firestore = None
 import token_economy
 
 USERS_FILE = Path(__file__).resolve().parent / "users.json"
@@ -75,8 +87,168 @@ def save_users(users):
         return False
 
 
-def load_accounts():
+FIREBASE_SERVICE_ACCOUNT_FILE = Path(__file__).resolve().parent / "firebase_service_account.json"
+FIREBASE_SERVICE_ACCOUNT_ENV = "FIREBASE_SERVICE_ACCOUNT_PATH"
+firebase_app = None
+firestore_client = None
+
+
+def normalize_api_key(key: str) -> str:
+    return (key or "").strip()
+
+
+def get_firebase_service_account_path():
+    env_path = normalize_api_key(os.getenv(FIREBASE_SERVICE_ACCOUNT_ENV, ""))
+    if env_path:
+        return Path(env_path)
+    return FIREBASE_SERVICE_ACCOUNT_FILE
+
+
+def initialize_firebase():
+    global firebase_app, firestore_client
+    if firestore_client:
+        return firestore_client
+    if firebase_admin is None or firestore is None or credentials is None:
+        st.session_state.firebase_error = (
+            "firebase-admin package is not installed. Install it with `pip install firebase-admin`."
+        )
+        return None
+    try:
+        if firebase_admin._apps:
+            firebase_app = firebase_admin.get_app()
+        else:
+            sa_path = get_firebase_service_account_path()
+            if not sa_path.exists():
+                raise FileNotFoundError(
+                    f"Firebase service account file not found: {sa_path}. "
+                    "Set FIREBASE_SERVICE_ACCOUNT_PATH or place firebase_service_account.json next to app.py."
+                )
+            cred = credentials.Certificate(str(sa_path))
+            firebase_app = firebase_admin.initialize_app(cred)
+        firestore_client = firestore.client()
+        return firestore_client
+    except Exception as exc:
+        st.session_state.firebase_error = str(exc)
+        return None
+
+
+def get_firestore_client():
+    client = initialize_firebase()
+    if client is None:
+        raise RuntimeError(
+            "Firebase is not initialized. Check your service account JSON file and FIREBASE_SERVICE_ACCOUNT_PATH."
+        )
+    return client
+
+
+def get_users_collection():
+    return get_firestore_client().collection("users")
+
+
+def hash_password(password: str) -> str:
+    if not password or bcrypt is None:
+        return ""
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    if not password or not password_hash or bcrypt is None:
+        return False
+    try:
+        return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
+    except Exception:
+        return False
+
+
+def find_accounts_by_username(username: str) -> list:
+    if not username:
+        return []
+    username = username.strip()
+    if not username:
+        return []
     accounts = []
+    db = initialize_firebase()
+    if db:
+        try:
+            query = get_users_collection().where("username", "==", username).stream()
+            for doc in query:
+                data = doc.to_dict()
+                if isinstance(data, dict):
+                    normalize_user_data(data)
+                    accounts.append(data)
+        except Exception:
+            pass
+    else:
+        accounts = [acc for acc in load_accounts() if acc.get("username", "").strip() == username]
+    return accounts
+
+
+def find_account_by_credentials(username: str, password: str):
+    if not username or not password:
+        return None
+    for account in find_accounts_by_username(username):
+        if verify_password(password, account.get("password_hash", "")):
+            return account
+        if account.get("password") == password:
+            return account
+    return None
+
+
+def is_password_taken(password: str) -> bool:
+    if not password:
+        return False
+    password = password.strip()
+    if not password:
+        return False
+    for account in load_accounts():
+        if verify_password(password, account.get("password_hash", "")):
+            return True
+        if account.get("password") == password:
+            return True
+    return False
+
+
+def read_firebase_account(username: str):
+    accounts = find_accounts_by_username(username)
+    return accounts[0] if accounts else None
+
+
+def firebase_user_exists(username: str) -> bool:
+    return bool(find_accounts_by_username(username))
+
+
+def save_firebase_user(account: dict) -> bool:
+    if not account or "username" not in account:
+        return False
+    doc_id = str(account.get("id") or account.get("username"))
+    db = initialize_firebase()
+    if db is None:
+        return False
+    try:
+        get_users_collection().document(doc_id).set(account)
+        return True
+    except Exception as exc:
+        st.session_state.firebase_error = str(exc)
+        return False
+
+
+def load_accounts():
+    db = initialize_firebase()
+    accounts = []
+    if db:
+        try:
+            for doc in get_users_collection().stream():
+                data = doc.to_dict()
+                if isinstance(data, dict):
+                    normalize_user_data(data)
+                    try:
+                        token_economy.normalize_account(data, token_economy.settings)
+                    except Exception:
+                        pass
+                    accounts.append(data)
+            return accounts
+        except Exception:
+            pass
     for acc in load_users().values():
         if isinstance(acc, dict):
             normalize_user_data(acc)
@@ -89,36 +261,115 @@ def load_accounts():
 
 
 def save_accounts(accounts):
-    return save_users({acc["username"]: acc for acc in accounts if "username" in acc})
+    db = initialize_firebase()
+    if db:
+        success = True
+        for acc in accounts:
+            if not save_firebase_user(acc):
+                success = False
+        return success
+    return save_users({acc.get("id", acc.get("username")): acc for acc in accounts if "username" in acc})
 
 
 def persist_user(account):
     if not account or "username" not in account:
         return False
-    users = load_users()
-    users[account["username"]] = account
-    success = save_users(users)
+    db = initialize_firebase()
+    if db:
+        success = save_firebase_user(account)
+    else:
+        users = load_users()
+        key = account.get("id") or account.get("username")
+        if not key:
+            return False
+        users[str(key)] = account
+        success = save_users(users)
     if success:
         st.session_state._cached_current_account = account
     return success
 
 
+def collect_request_lists(accounts: list) -> tuple:
+    gift_ids = set()
+    loan_ids = set()
+    gift_requests = []
+    loan_requests = []
+    for account in accounts:
+        for request in account.get("outgoing_gift_requests", []) + account.get("incoming_gift_requests", []):
+            if not isinstance(request, dict):
+                continue
+            request_id = request.get("id")
+            if not request_id or request_id in gift_ids:
+                continue
+            gift_ids.add(request_id)
+            gift_requests.append(request)
+        for request in account.get("outgoing_loan_requests", []) + account.get("incoming_loan_requests", []):
+            if not isinstance(request, dict):
+                continue
+            request_id = request.get("id")
+            if not request_id or request_id in loan_ids:
+                continue
+            loan_ids.add(request_id)
+            loan_requests.append(request)
+    return gift_requests, loan_requests
+
+
+def propagate_request_update(accounts: list, updated_request: dict, request_type: str):
+    if not updated_request or not isinstance(updated_request, dict):
+        return
+    request_id = updated_request.get("id")
+    if not request_id:
+        return
+    if request_type == "gift":
+        request_keys = ["outgoing_gift_requests", "incoming_gift_requests"]
+    else:
+        request_keys = ["outgoing_loan_requests", "incoming_loan_requests"]
+    for account in accounts:
+        for key in request_keys:
+            for request in account.get(key, []):
+                if request.get("id") == request_id:
+                    request.update(updated_request)
+
+
 def find_account_by_id(account_id):
     if not account_id:
         return None
+    db = initialize_firebase()
+    if db:
+        try:
+            query = get_users_collection().where("id", "==", account_id).limit(1).stream()
+            for doc in query:
+                data = doc.to_dict()
+                if isinstance(data, dict):
+                    normalize_user_data(data)
+                    return data
+        except Exception:
+            pass
     return next((acc for acc in load_accounts() if acc.get("id") == account_id), None)
 
 
 def find_account_by_passkey(passkey):
     if not passkey:
         return None
+    db = initialize_firebase()
+    if db:
+        try:
+            query = get_users_collection().where("passkey", "==", str(passkey).strip()).limit(1).stream()
+            for doc in query:
+                data = doc.to_dict()
+                if isinstance(data, dict):
+                    normalize_user_data(data)
+                    return data
+        except Exception:
+            pass
     return next((acc for acc in load_accounts() if str(acc.get("passkey")) == str(passkey).strip()), None)
 
 
 def ensure_default_users():
-    users = load_users()
-    existing_passkeys = [user.get("passkey") for user in users.values() if user.get("passkey")]
-    if "Reyaansh Sharma" not in users:
+    accounts = load_accounts()
+    existing_passkeys = [user.get("passkey") for user in accounts if user.get("passkey")]
+    usernames = [user.get("username") for user in accounts if user.get("username")]
+    if "Reyaansh Sharma" not in usernames:
         owner_account = token_economy.create_account(
             "Reyaansh Sharma",
             "12345",
@@ -126,18 +377,18 @@ def ensure_default_users():
             existing_passkeys=existing_passkeys,
         )
         owner_account["chats"] = [{"title": "Owner Chat", "messages": []}]
-        users[owner_account["username"]] = owner_account
+        accounts.append(owner_account)
         existing_passkeys.append(owner_account["passkey"])
-    if "demo" not in users:
+    if "demo" not in usernames:
         demo_account = token_economy.create_account(
             "demo",
             "demo",
             existing_passkeys=existing_passkeys,
         )
         demo_account["chats"] = [{"title": "New Chat", "messages": []}]
-        users[demo_account["username"]] = demo_account
-    save_users(users)
-    return users
+        accounts.append(demo_account)
+    save_accounts(accounts)
+    return accounts
 
 try:
     from gtts import gTTS
@@ -162,17 +413,17 @@ except Exception:
 
 API_KEY_SLOTS = [
     {
-        "key": "AIzaSyADxlaE5Vw58YqDIF6WXmY48NaweIT1cGo",
+        "key": "",
         "name": "Primary",
         "model": "gemini-3.1-flash-lite",
     },
     {
-        "key": "GEMINI_API_KEY_2",
+        "key": "",
         "name": "Secondary",
         "model": "gemini-2.5-flash-lite",
     },
     {
-        "key": "GEMINI_API_KEY_3",
+        "key": "",
         "name": "Tertiary",
         "model": "gemini-2.5-flash-lite",
     },
@@ -508,6 +759,15 @@ DEVELOPER_ASSISTANT_SUMMARY = (
 if "current_account_id" not in st.session_state:
     st.session_state.current_account_id = ""
 
+if "current_user_id" not in st.session_state:
+    st.session_state.current_user_id = ""
+
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+
+if "firebase_error" not in st.session_state:
+    st.session_state.firebase_error = ""
+
 if "guest_chats" not in st.session_state:
     st.session_state.guest_chats = [{"title": "Guest Chat", "messages": []}]
 
@@ -581,10 +841,6 @@ if "dev_test_input" not in st.session_state:
 
 if "dev_code_snippet" not in st.session_state:
     st.session_state.dev_code_snippet = ""
-
-def normalize_api_key(key: str) -> str:
-    return (key or "").strip()
-
 
 def get_env_api_key() -> str:
     return normalize_api_key(os.getenv("GEMINI_API_KEY", ""))
@@ -1548,6 +1804,8 @@ with right_col:
         )
 
         accounts = load_accounts()
+        token_economy.sync_loan_statuses(accounts, st.session_state.token_settings)
+        st.session_state.gift_requests, st.session_state.loan_requests = collect_request_lists(accounts)
         account = next((acc for acc in accounts if acc.get("id") == st.session_state.current_account_id), None) if st.session_state.current_account_id else None
         if account:
             token_economy.reset_daily_limits(account, st.session_state.token_settings)
@@ -1660,7 +1918,10 @@ with right_col:
                             int(gift_request_amount),
                         )
                         if ok and request:
+                            donor.setdefault("outgoing_gift_requests", []).append(request)
+                            account.setdefault("incoming_gift_requests", []).append(request)
                             st.session_state.gift_requests.append(request)
+                            save_accounts(accounts)
                             st.success(msg)
                         else:
                             st.error(msg)
@@ -1688,7 +1949,10 @@ with right_col:
                             int(loan_request_amount),
                         )
                         if ok and request:
+                            account.setdefault("outgoing_loan_requests", []).append(request)
+                            lender.setdefault("incoming_loan_requests", []).append(request)
                             st.session_state.loan_requests.append(request)
+                            save_accounts(accounts)
                             st.success(msg)
                         else:
                             st.error(msg)
@@ -1711,6 +1975,7 @@ with right_col:
                                 log_target=st.session_state.token_logs,
                             )
                             if ok:
+                                propagate_request_update(accounts, req, "gift")
                                 save_accounts(accounts)
                                 st.success(msg)
                             else:
@@ -1718,6 +1983,8 @@ with right_col:
                         if resp_cols[1].button(f"Reject gift {req['id'][:8]}", key=f"reject_gift_{req['id']}"):
                             ok, msg = token_economy.reject_gift_request(req['id'], st.session_state.gift_requests)
                             if ok:
+                                propagate_request_update(accounts, req, "gift")
+                                save_accounts(accounts)
                                 st.success(msg)
                             else:
                                 st.error(msg)
@@ -1748,6 +2015,7 @@ with right_col:
                                 log_target=st.session_state.token_logs,
                             )
                             if ok:
+                                propagate_request_update(accounts, req, "loan")
                                 save_accounts(accounts)
                                 st.success(msg)
                             else:
@@ -1755,6 +2023,8 @@ with right_col:
                         if resp_cols[1].button(f"Reject loan {req['id'][:8]}", key=f"reject_loan_{req['id']}"):
                             ok, msg = token_economy.reject_loan_request(req['id'], st.session_state.loan_requests)
                             if ok:
+                                propagate_request_update(accounts, req, "loan")
+                                save_accounts(accounts)
                                 st.success(msg)
                             else:
                                 st.error(msg)
@@ -2302,23 +2572,29 @@ with left_col:
         with col1:
             if st.button("Switch ID", key="switch_id_button"):
                 st.session_state.current_account_id = ""
+                st.session_state.current_user_id = ""
                 st.session_state._cached_current_account = None
                 st.session_state.show_login_fields = True
                 st.session_state.active_chat = 0
                 st.session_state.user_role = "user"
+                st.session_state.logged_in = False
                 rerun_app()
         with col2:
             if st.button("Log out", key="logout_button"):
                 st.session_state.current_account_id = ""
+                st.session_state.current_user_id = ""
                 st.session_state._cached_current_account = None
                 st.session_state.show_login_fields = False
                 st.session_state.active_chat = 0
                 st.session_state.scroll_to_bottom = True
                 st.session_state.user_role = "user"
+                st.session_state.logged_in = False
                 st.session_state.dev_logs = []
                 rerun_app()
         st.markdown(f"<div style='margin-top: 12px; font-size: 14px; color: #b5f0d0;'>Signed in as <strong>{escape_html(current_username)}</strong></div>", unsafe_allow_html=True)
     elif st.session_state.show_login_fields:
+        if st.session_state.firebase_error:
+            st.error(f"Firebase initialization error: {st.session_state.firebase_error}")
         login_id = st.text_input("Username", key="login_id")
         login_pwd = st.text_input("Password", type="password", key="login_pwd")
         col1, col2 = st.columns(2)
@@ -2326,9 +2602,9 @@ with left_col:
             if st.button("Login", key="login_button"):
                 username = login_id.strip()
                 password = login_pwd.strip()
-                
-                # Check for developer credentials
-                if username == DEVELOPER_USERNAME and password == DEVELOPER_PASSWORD:
+                if not username or not password:
+                    st.error("Username and password are required.")
+                elif username == DEVELOPER_USERNAME and password == DEVELOPER_PASSWORD:
                     st.session_state.current_account_id = "developer_mode"
                     st.session_state.user_role = "developer"
                     st.session_state.active_chat = 0
@@ -2336,61 +2612,56 @@ with left_col:
                     st.success("Developer Mode Activated")
                     rerun_app()
                 else:
-                    users = load_users()
-                    if username in users and users[username].get("password") != password:
-                        st.error("Invalid username or password")
+                    db = initialize_firebase()
+                    if db is None:
+                        st.error("Firebase is not configured. Contact the administrator.")
                     else:
-                        account = next((acc for acc in users.values() if acc["username"] == username and acc["password"] == password), None)
-                        if account:
-                            st.session_state.current_account_id = account["id"]
-                            st.session_state._cached_current_account = account
-                            st.session_state.user_role = "user"
-                            st.session_state.active_chat = 0
-                            st.session_state.show_login_fields = False
-                            st.success(f"Logged in as {username}")
-                            rerun_app()
+                        account = find_account_by_credentials(username, password)
+                        if account is None:
+                            st.error("Username or password is incorrect")
                         else:
-                            # Auto-create account when user logs in for the first time
-                            existing_passkeys = [u.get("passkey") for u in users.values() if u.get("passkey")]
-                            new_account = token_economy.create_account(
-                                username,
-                                password,
-                                existing_passkeys=existing_passkeys,
-                            )
-                            users[username] = new_account
-                            save_users(users)
-                            st.session_state.current_account_id = new_account["id"]
-                            st.session_state._cached_current_account = new_account
+                            st.session_state.current_account_id = account.get("id", "")
+                            st.session_state.current_user_id = username
+                            st.session_state._cached_current_account = account
+                            st.session_state.logged_in = True
                             st.session_state.user_role = "user"
                             st.session_state.active_chat = 0
                             st.session_state.show_login_fields = False
-                            st.success(f"Created and logged in as {username}")
+                            st.success("Login successful")
                             rerun_app()
         with col2:
             if st.button("Register", key="register_button"):
                 username = login_id.strip()
                 password = login_pwd.strip()
-                users = load_users()
                 if not username or not password:
                     st.error("Username and password are required.")
-                elif username in users:
-                    st.error("This username is already taken. Please choose a different one.")
-                elif any(u.get("password") == password for u in users.values()):
-                    st.error("This password is already taken. Please choose a different password.")
                 else:
-                    existing_passkeys = [u.get("passkey") for u in users.values() if u.get("passkey")]
-                    new_account = token_economy.create_account(
-                        username,
-                        password,
-                        existing_passkeys=existing_passkeys,
-                    )
-                    users[username] = new_account
-                    save_users(users)
-                    st.session_state.current_account_id = new_account["id"]
-                    st.session_state.active_chat = 0
-                    st.session_state.show_login_fields = False
-                    st.success(f"Registered and logged in as {username}")
-                    rerun_app()
+                    db = initialize_firebase()
+                    if db is None:
+                        st.error("Firebase is not configured. Contact the administrator.")
+                    elif is_password_taken(password):
+                        st.error("can't register this ID")
+                    else:
+                        existing_passkeys = [u.get("passkey") for u in load_accounts() if u.get("passkey")]
+                        new_account = token_economy.create_account(
+                            username,
+                            password,
+                            existing_passkeys=existing_passkeys,
+                        )
+                        new_account["password_hash"] = hash_password(password)
+                        new_account.pop("password", None)
+                        if save_firebase_user(new_account):
+                            st.session_state.current_account_id = new_account.get("id", "")
+                            st.session_state.current_user_id = username
+                            st.session_state._cached_current_account = new_account
+                            st.session_state.logged_in = True
+                            st.session_state.user_role = "user"
+                            st.session_state.active_chat = 0
+                            st.session_state.show_login_fields = False
+                            st.success("Registration successful")
+                            rerun_app()
+                        else:
+                            st.error("can't register this ID")
     else:
         if st.button("Switch ID", key="switch_id_button"):
             st.session_state.show_login_fields = True

@@ -15,6 +15,7 @@ settings = {
     "daily_gift_cap": 200,
     "loan_return_rate": 1.2,
     "loan_deadline_days": 7,
+    "loan_auto_default_days": 30,
     "loan_default_penalty_rate": 0.5,
 }
 
@@ -687,6 +688,11 @@ def normalize_account(account: Dict[str, Any], config: Dict[str, Any]) -> None:
     account.setdefault("streak", 0)
     account.setdefault("gifts_sent_today", 0)
     account.setdefault("gift_reset_date", "")
+    account.setdefault("gift_history", [])
+    account.setdefault("outgoing_gift_requests", [])
+    account.setdefault("incoming_gift_requests", [])
+    account.setdefault("outgoing_loan_requests", [])
+    account.setdefault("incoming_loan_requests", [])
     account.setdefault("activity_log", [])
     account.setdefault("task_history", [])
     account.setdefault("loan_history", [])
@@ -719,6 +725,11 @@ def create_account(
         "streak": 0,
         "gifts_sent_today": 0,
         "gift_reset_date": "",
+        "gift_history": [],
+        "outgoing_gift_requests": [],
+        "incoming_gift_requests": [],
+        "outgoing_loan_requests": [],
+        "incoming_loan_requests": [],
         "activity_log": [],
         "task_history": [],
         "loan_history": [],
@@ -999,6 +1010,22 @@ def approve_gift_request(
     sender["gifts_sent_today"] += amount
     request["status"] = "approved"
     request["approved_at"] = current_datetime_str()
+    sender.setdefault("gift_history", []).append({
+        "timestamp": current_datetime_str(),
+        "type": "sent",
+        "amount": amount,
+        "to": receiver["id"],
+        "to_username": receiver["username"],
+        "request_id": request["id"],
+    })
+    receiver.setdefault("gift_history", []).append({
+        "timestamp": current_datetime_str(),
+        "type": "received",
+        "amount": amount,
+        "from": sender["id"],
+        "from_username": sender["username"],
+        "request_id": request["id"],
+    })
     append_log(sender, "gift_sent", f"Sent {amount} tokens to {receiver['username']}.")
     append_log(receiver, "gift_received", f"Received {amount} tokens from {sender['username']}.")
     if log_target is not None:
@@ -1217,6 +1244,34 @@ def sync_loan_statuses(accounts: List[Dict[str, Any]], config: Optional[Dict[str
         for loan in account.get("loans_taken", []):
             if loan.get("status") == "active" and loan.get("deadline") and loan.get("deadline") < today:
                 loan["overdue"] = True
+                try:
+                    deadline_date = datetime.strptime(loan["deadline"], "%Y-%m-%d")
+                    overdue_days = (datetime.utcnow() - deadline_date).days
+                except Exception:
+                    overdue_days = 0
+                if overdue_days >= config.get("loan_auto_default_days", 30):
+                    lender = get_account_by_id(accounts, loan.get("lender"))
+                    if lender is not None:
+                        lender_loan = _find_counterparty_loan(lender, loan.get("id"), is_lender=True)
+                        if lender_loan and lender_loan.get("status") == "active":
+                            return_amount = loan.get("return_amount", 0)
+                            paid = min(account.get("tokens", 0), return_amount)
+                            account["tokens"] = max(account.get("tokens", 0) - paid, 0)
+                            lender["tokens"] = lender.get("tokens", 0) + paid
+                            loan["status"] = "defaulted"
+                            loan["defaulted_at"] = today
+                            lender_loan["status"] = "defaulted"
+                            lender_loan["defaulted_at"] = today
+                            append_log(
+                                account,
+                                "loan_default",
+                                f"Loan defaulted after {overdue_days} days and {paid} tokens were transferred to {lender['username']}.",
+                            )
+                            append_log(
+                                lender,
+                                "loan_default",
+                                f"Loan defaulted after {overdue_days} days and {paid} tokens were recovered from {account['username']}.",
+                            )
         for loan in account.get("loans_given", []):
             if loan.get("status") == "active" and loan.get("deadline") and loan.get("deadline") < today:
                 loan["overdue"] = True
