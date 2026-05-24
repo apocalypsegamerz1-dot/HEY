@@ -99,6 +99,66 @@ def normalize_api_key(key: str) -> str:
     return (key or "").strip()
 
 
+def _normalize_private_key_string(private_key: str) -> str:
+    if not isinstance(private_key, str):
+        return private_key
+    private_key = private_key.replace("\r\n", "\n").replace("\r", "\n")
+    if "\\n" in private_key and "-----BEGIN" in private_key:
+        private_key = private_key.replace("\\n", "\n")
+    return private_key
+
+
+def _escape_private_key_in_raw_json(raw_json: str) -> str:
+    key_marker = '"private_key"'
+    key_index = raw_json.find(key_marker)
+    if key_index == -1:
+        raise ValueError("Missing private_key field in Firebase service account text.")
+
+    colon_index = raw_json.find(":", key_index + len(key_marker))
+    if colon_index == -1:
+        raise ValueError("Malformed Firebase service account text.")
+
+    quote_index = raw_json.find('"', colon_index)
+    if quote_index == -1:
+        raise ValueError("Malformed Firebase service account text.")
+
+    start_index = quote_index + 1
+    i = start_index
+    while i < len(raw_json):
+        if raw_json[i] == '"':
+            backslashes = 0
+            j = i - 1
+            while j >= start_index and raw_json[j] == "\\":
+                backslashes += 1
+                j -= 1
+            if backslashes % 2 == 0:
+                private_key_value = raw_json[start_index:i]
+                escaped_key_value = (
+                    private_key_value
+                    .replace("\r\n", "\\n")
+                    .replace("\r", "\\n")
+                    .replace("\n", "\\n")
+                )
+                return raw_json[:start_index] + escaped_key_value + raw_json[i:]
+        i += 1
+    raise ValueError("Unable to normalize the private_key value in the service account JSON.")
+
+
+def _parse_service_account_secret(secret):
+    if isinstance(secret, dict):
+        return secret
+    if isinstance(secret, str):
+        raw_text = secret.strip()
+        try:
+            return json.loads(raw_text)
+        except json.JSONDecodeError:
+            if "private_key" not in raw_text:
+                raise
+            normalized = _escape_private_key_in_raw_json(raw_text)
+            return json.loads(normalized)
+    raise ValueError("Firebase service account secret must be a JSON string or a dictionary.")
+
+
 def get_firebase_service_account_path():
     env_path = normalize_api_key(os.getenv(FIREBASE_SERVICE_ACCOUNT_ENV, ""))
     if env_path:
@@ -130,58 +190,22 @@ def get_firebase_service_account_path():
         except Exception:
             sa_json = None
 
-    if sa_json:
+    if sa_json is not None:
         try:
-            import json as _json
-            import re
+            service_account = _parse_service_account_secret(sa_json)
+            if not isinstance(service_account, dict):
+                raise ValueError("Parsed Firebase service account data is not a JSON object.")
 
-            if not isinstance(sa_json, str):
-                sa_json = _json.dumps(sa_json)
+            if service_account.get("private_key"):
+                service_account["private_key"] = _normalize_private_key_string(
+                    service_account["private_key"]
+                )
 
-            def _normalize_service_account_json(raw_json: str) -> str:
-                try:
-                    _json.loads(raw_json)
-                    return raw_json
-                except Exception:
-                    if '"private_key"' not in raw_json:
-                        raise
+            if not service_account.get("private_key") or not isinstance(service_account["private_key"], str):
+                raise ValueError("Firebase service account JSON must include a valid private_key string.")
 
-                    key_marker = '"private_key"'
-                    key_index = raw_json.find(key_marker)
-                    if key_index == -1:
-                        raise
-                    colon_index = raw_json.find(':', key_index + len(key_marker))
-                    if colon_index == -1:
-                        raise
-                    quote_index = raw_json.find('"', colon_index)
-                    if quote_index == -1:
-                        raise
-                    start_index = quote_index + 1
-
-                    i = start_index
-                    while i < len(raw_json):
-                        if raw_json[i] == '"':
-                            backslashes = 0
-                            j = i - 1
-                            while j >= start_index and raw_json[j] == '\\':
-                                backslashes += 1
-                                j -= 1
-                            if backslashes % 2 == 0:
-                                private_key_value = raw_json[start_index:i]
-                                escaped_key_value = (
-                                    private_key_value
-                                    .replace('\r\n', '\\n')
-                                    .replace('\r', '\\n')
-                                    .replace('\n', '\\n')
-                                )
-                                return raw_json[:start_index] + escaped_key_value + raw_json[i:]
-                        i += 1
-                    raise
-
-            sa_json = _normalize_service_account_json(sa_json)
-            parsed = _json.loads(sa_json)
-            tf = tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json")
-            tf.write(_json.dumps(parsed))
+            tf = tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json", encoding="utf-8")
+            tf.write(json.dumps(service_account))
             tf.close()
             return Path(tf.name)
         except Exception as exc:
@@ -222,7 +246,20 @@ def initialize_firebase():
         firestore_client = firestore.client()
         return firestore_client
     except Exception as exc:
-        st.session_state.firebase_error = str(exc)
+        message = str(exc)
+        if "Unable to load PEM file" in message or "InvalidData" in message:
+            message = (
+                "Firebase service account PEM is malformed or contains invalid line endings. "
+                "Verify that FIREBASE_SERVICE_ACCOUNT_JSON is valid JSON and that the private_key has proper newlines. "
+                f"Original error: {message}"
+            )
+        elif "Invalid Firebase service account JSON" in message:
+            message = (
+                "Firebase service account data is invalid. "
+                "Verify the JSON syntax in FIREBASE_SERVICE_ACCOUNT_JSON or Streamlit secret. "
+                f"Original error: {message}"
+            )
+        st.session_state.firebase_error = message
         return None
 
 
