@@ -146,17 +146,37 @@ def get_firebase_service_account_path():
                     if '"private_key"' not in raw_json:
                         raise
 
-                    def _escape_private_key(match):
-                        key_value = match.group("value")
-                        key_value = key_value.replace("\r\n", "\n").replace("\r", "\n")
-                        key_value = key_value.replace("\n", "\\n")
-                        return f'{match.group("prefix")}{key_value}"'
-
-                    pattern = re.compile(r'(?P<prefix>"private_key"\s*:\s*")(?P<value>.*?)(?=")', re.DOTALL)
-                    normalized_json, count = pattern.subn(_escape_private_key, raw_json, count=1)
-                    if count == 0:
+                    key_marker = '"private_key"'
+                    key_index = raw_json.find(key_marker)
+                    if key_index == -1:
                         raise
-                    return normalized_json
+                    colon_index = raw_json.find(':', key_index + len(key_marker))
+                    if colon_index == -1:
+                        raise
+                    quote_index = raw_json.find('"', colon_index)
+                    if quote_index == -1:
+                        raise
+                    start_index = quote_index + 1
+
+                    i = start_index
+                    while i < len(raw_json):
+                        if raw_json[i] == '"':
+                            backslashes = 0
+                            j = i - 1
+                            while j >= start_index and raw_json[j] == '\\':
+                                backslashes += 1
+                                j -= 1
+                            if backslashes % 2 == 0:
+                                private_key_value = raw_json[start_index:i]
+                                escaped_key_value = (
+                                    private_key_value
+                                    .replace('\r\n', '\\n')
+                                    .replace('\r', '\\n')
+                                    .replace('\n', '\\n')
+                                )
+                                return raw_json[:start_index] + escaped_key_value + raw_json[i:]
+                        i += 1
+                    raise
 
             sa_json = _normalize_service_account_json(sa_json)
             parsed = _json.loads(sa_json)
