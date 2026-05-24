@@ -25,6 +25,109 @@ except Exception as e:
     credentials = None
     firestore = None
     FIREBASE_IMPORT_ERROR = str(e)
+try:
+    from supabase import create_client
+    SUPABASE_IMPORT_ERROR = None
+except Exception as e:
+    create_client = None
+    SUPABASE_IMPORT_ERROR = str(e)
+
+# Supabase client cache
+supabase_client = None
+
+
+def is_supabase_configured():
+    # Check env first, then Streamlit secrets
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_KEY")
+    if url and key:
+        return True
+    try:
+        if hasattr(st, "secrets") and st.secrets is not None:
+            s_url = st.secrets.get("SUPABASE_URL")
+            s_key = st.secrets.get("SUPABASE_KEY")
+            if s_url and s_key:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def get_supabase_client():
+    global supabase_client
+    if supabase_client:
+        return supabase_client
+    if create_client is None:
+        raise RuntimeError("supabase-py is not installed. Add it to requirements.txt (supabase==1.0.0 or supabase-py)")
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_KEY")
+    if (not url or not key) and hasattr(st, "secrets") and st.secrets is not None:
+        try:
+            url = url or st.secrets.get("SUPABASE_URL")
+            key = key or st.secrets.get("SUPABASE_KEY")
+        except Exception:
+            pass
+    if not url or not key:
+        raise RuntimeError("Supabase credentials not found in env or st.secrets")
+    supabase_client = create_client(url, key)
+    return supabase_client
+
+
+def _supabase_find_accounts_by_username(username: str) -> list:
+    if not username:
+        return []
+    try:
+        client = get_supabase_client()
+        # Query JSON->>username field
+        resp = client.table("users").select("data").filter("data->>username", "eq", username).execute()
+        rows = resp.data or []
+        accounts = []
+        for row in rows:
+            data = row.get("data") if isinstance(row, dict) else None
+            if isinstance(data, dict):
+                normalize_user_data(data)
+                accounts.append(data)
+        return accounts
+    except Exception:
+        return []
+
+
+def _supabase_save_user(account: dict) -> bool:
+    if not account or "username" not in account:
+        return False
+    try:
+        client = get_supabase_client()
+        doc_id = str(account.get("id") or account.get("username"))
+        payload = {"id": doc_id, "data": account}
+        client.table("users").upsert(payload).execute()
+        return True
+    except Exception as exc:
+        try:
+            st.session_state.firebase_error = f"Supabase save error: {exc}"
+        except Exception:
+            pass
+        return False
+
+
+def _supabase_load_accounts() -> list:
+    try:
+        client = get_supabase_client()
+        resp = client.table("users").select("data").execute()
+        rows = resp.data or []
+        accounts = []
+        for row in rows:
+            data = row.get("data") if isinstance(row, dict) else None
+            if isinstance(data, dict):
+                normalize_user_data(data)
+                try:
+                    token_economy.normalize_account(data, token_economy.settings)
+                except Exception:
+                    pass
+                accounts.append(data)
+        return accounts
+    except Exception:
+        return []
+
 import token_economy
 
 USERS_FILE = Path(__file__).resolve().parent / "users.json"
@@ -367,6 +470,12 @@ def find_accounts_by_username(username: str) -> list:
     if not username:
         return []
     accounts = []
+    if is_supabase_configured():
+        try:
+            accounts = _supabase_find_accounts_by_username(username)
+            return accounts
+        except Exception:
+            accounts = []
     db = initialize_firebase()
     if db:
         try:
@@ -421,6 +530,9 @@ def save_firebase_user(account: dict) -> bool:
     if not account or "username" not in account:
         return False
     doc_id = str(account.get("id") or account.get("username"))
+    if is_supabase_configured():
+        return _supabase_save_user(account)
+
     db = initialize_firebase()
     if db is None:
         return False
@@ -433,6 +545,11 @@ def save_firebase_user(account: dict) -> bool:
 
 
 def load_accounts():
+    if is_supabase_configured():
+        sup_accounts = _supabase_load_accounts()
+        if sup_accounts:
+            return sup_accounts
+
     db = initialize_firebase()
     accounts = []
     if db:
@@ -461,6 +578,13 @@ def load_accounts():
 
 
 def save_accounts(accounts):
+    if is_supabase_configured():
+        success = True
+        for acc in accounts:
+            if not _supabase_save_user(acc):
+                success = False
+        return success
+
     db = initialize_firebase()
     if db:
         success = True
@@ -474,16 +598,19 @@ def save_accounts(accounts):
 def persist_user(account):
     if not account or "username" not in account:
         return False
-    db = initialize_firebase()
-    if db:
-        success = save_firebase_user(account)
+    if is_supabase_configured():
+        success = _supabase_save_user(account)
     else:
-        users = load_users()
-        key = account.get("id") or account.get("username")
-        if not key:
-            return False
-        users[str(key)] = account
-        success = save_users(users)
+        db = initialize_firebase()
+        if db:
+            success = save_firebase_user(account)
+        else:
+            users = load_users()
+            key = account.get("id") or account.get("username")
+            if not key:
+                return False
+            users[str(key)] = account
+            success = save_users(users)
     if success:
         st.session_state._cached_current_account = account
     return success
