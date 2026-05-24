@@ -19,10 +19,12 @@ except ImportError:
 try:
     import firebase_admin
     from firebase_admin import credentials, firestore
-except ImportError:
+    FIREBASE_IMPORT_ERROR = None
+except Exception as e:
     firebase_admin = None
     credentials = None
     firestore = None
+    FIREBASE_IMPORT_ERROR = str(e)
 import token_economy
 
 USERS_FILE = Path(__file__).resolve().parent / "users.json"
@@ -101,6 +103,52 @@ def get_firebase_service_account_path():
     env_path = normalize_api_key(os.getenv(FIREBASE_SERVICE_ACCOUNT_ENV, ""))
     if env_path:
         return Path(env_path)
+
+    sa_json = None
+    try:
+        sa_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
+    except Exception:
+        sa_json = None
+
+    if not sa_json:
+        try:
+            if hasattr(st, "secrets") and st.secrets is not None:
+                try:
+                    sa_json = st.secrets["FIREBASE_SERVICE_ACCOUNT_JSON"]
+                except Exception:
+                    sa_json = None
+                if not sa_json:
+                    try:
+                        fb = st.secrets["firebase"]
+                    except Exception:
+                        fb = None
+                    if isinstance(fb, dict):
+                        if fb.get("service_account"):
+                            sa_json = fb["service_account"]
+                        elif fb.get("serviceAccount"):
+                            sa_json = fb["serviceAccount"]
+        except Exception:
+            sa_json = None
+
+    if sa_json:
+        try:
+            import json as _json
+
+            if not isinstance(sa_json, str):
+                sa_json = _json.dumps(sa_json)
+            # Ensure the provided secret is valid JSON
+            parsed = _json.loads(sa_json)
+            tf = tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json")
+            tf.write(_json.dumps(parsed))
+            tf.close()
+            return Path(tf.name)
+        except Exception as exc:
+            raise ValueError(
+                "Invalid Firebase service account JSON. "
+                "Please verify FIREBASE_SERVICE_ACCOUNT_JSON in Streamlit secrets or environment. "
+                f"Error: {exc}"
+            )
+
     return FIREBASE_SERVICE_ACCOUNT_FILE
 
 
@@ -109,9 +157,13 @@ def initialize_firebase():
     if firestore_client:
         return firestore_client
     if firebase_admin is None or firestore is None or credentials is None:
-        st.session_state.firebase_error = (
-            "firebase-admin package is not installed. Install it with `pip install firebase-admin`."
-        )
+        msg = "firebase-admin package is not installed. Install it with `pip install firebase-admin`."
+        try:
+            if FIREBASE_IMPORT_ERROR:
+                msg += f" Import error: {FIREBASE_IMPORT_ERROR}"
+        except NameError:
+            pass
+        st.session_state.firebase_error = msg
         return None
     try:
         if firebase_admin._apps:
@@ -413,17 +465,17 @@ except Exception:
 
 API_KEY_SLOTS = [
     {
-        "key": "NEW_KEY_1",
+        "key": "",
         "name": "Primary",
         "model": "gemini-3.1-flash-lite",
     },
     {
-        "key": "NEW_KEY_2",
+        "key": "",
         "name": "Secondary",
         "model": "gemini-2.5-flash-lite",
     },
     {
-        "key": "NEW_KEY_3",
+        "key": "",
         "name": "Tertiary",
         "model": "gemini-2.5-flash-lite",
     },
