@@ -119,14 +119,26 @@ def _normalize_private_key_string(private_key: str) -> str:
     start = key.index(begin_marker) + len(begin_marker)
     end = key.index(end_marker)
     body = key[start:end].strip()
-    # Keep only base64 chars and padding, remove invalid control chars/whitespace
     import re as _re
 
     cleaned_body = _re.sub(r"[^A-Za-z0-9+/=]", "", body)
     if not cleaned_body:
         raise ValueError("Firebase private_key PEM content is empty after sanitization.")
 
-    wrapped_body = "\n".join([cleaned_body[i : i + 64] for i in range(0, len(cleaned_body), 64)])
+    remainder = len(cleaned_body) % 4
+    if remainder:
+        cleaned_body += "=" * (4 - remainder)
+
+    try:
+        decoded = base64.b64decode(cleaned_body, validate=True)
+    except Exception as exc:
+        raise ValueError(
+            "Firebase private_key PEM base64 body is invalid. "
+            f"Original base64 error: {exc}"
+        )
+
+    encoded = base64.b64encode(decoded).decode("ascii")
+    wrapped_body = "\n".join([encoded[i : i + 64] for i in range(0, len(encoded), 64)])
     normalized = f"{begin_marker}\n{wrapped_body}\n{end_marker}\n"
     return normalized
 
