@@ -133,10 +133,32 @@ def get_firebase_service_account_path():
     if sa_json:
         try:
             import json as _json
+            import re
 
             if not isinstance(sa_json, str):
                 sa_json = _json.dumps(sa_json)
-            # Ensure the provided secret is valid JSON
+
+            def _normalize_service_account_json(raw_json: str) -> str:
+                try:
+                    _json.loads(raw_json)
+                    return raw_json
+                except Exception:
+                    if '"private_key"' not in raw_json:
+                        raise
+
+                    def _escape_private_key(match):
+                        key_value = match.group("value")
+                        key_value = key_value.replace("\r\n", "\n").replace("\r", "\n")
+                        key_value = key_value.replace("\n", "\\n")
+                        return f'{match.group("prefix")}{key_value}"'
+
+                    pattern = re.compile(r'(?P<prefix>"private_key"\s*:\s*")(?P<value>.*?)(?=")', re.DOTALL)
+                    normalized_json, count = pattern.subn(_escape_private_key, raw_json, count=1)
+                    if count == 0:
+                        raise
+                    return normalized_json
+
+            sa_json = _normalize_service_account_json(sa_json)
             parsed = _json.loads(sa_json)
             tf = tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json")
             tf.write(_json.dumps(parsed))
