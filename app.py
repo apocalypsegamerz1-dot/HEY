@@ -959,6 +959,13 @@ def get_env_api_key() -> str:
     return normalize_api_key(os.getenv("GEMINI_API_KEY", ""))
 
 
+def normalize_api_key(key: str) -> str:
+    try:
+        return (key or "").strip()
+    except Exception:
+        return ""
+
+
 def get_api_slot(index: int) -> dict:
     return API_KEY_SLOTS[index] if 0 <= index < len(API_KEY_SLOTS) else API_KEY_SLOTS[0]
 
