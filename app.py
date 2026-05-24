@@ -108,12 +108,27 @@ def _normalize_private_key_string(private_key: str) -> str:
     key = key.replace("\\n", "\n")
     key = key.strip()
 
-    if "-----BEGIN PRIVATE KEY-----" not in key or "-----END PRIVATE KEY-----" not in key:
+    begin_marker = "-----BEGIN PRIVATE KEY-----"
+    end_marker = "-----END PRIVATE KEY-----"
+    if begin_marker not in key or end_marker not in key:
         raise ValueError(
             "Firebase private_key is not a valid PEM block. "
             "It should contain BEGIN PRIVATE KEY and END PRIVATE KEY markers."
         )
-    return key
+
+    start = key.index(begin_marker) + len(begin_marker)
+    end = key.index(end_marker)
+    body = key[start:end].strip()
+    # Keep only base64 chars and padding, remove invalid control chars/whitespace
+    import re as _re
+
+    cleaned_body = _re.sub(r"[^A-Za-z0-9+/=]", "", body)
+    if not cleaned_body:
+        raise ValueError("Firebase private_key PEM content is empty after sanitization.")
+
+    wrapped_body = "\n".join([cleaned_body[i : i + 64] for i in range(0, len(cleaned_body), 64)])
+    normalized = f"{begin_marker}\n{wrapped_body}\n{end_marker}\n"
+    return normalized
 
 
 def _escape_private_key_in_raw_json(raw_json: str) -> str:
@@ -192,14 +207,19 @@ def _validate_service_account_data(service_account: dict) -> dict:
 
 def get_firebase_service_account_data():
     sa_secret = None
+    source = None
     try:
         sa_secret = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
+        if sa_secret:
+            source = "env:FIREBASE_SERVICE_ACCOUNT_JSON"
     except Exception:
         sa_secret = None
 
     if not sa_secret and hasattr(st, "secrets") and st.secrets is not None:
         try:
             sa_secret = st.secrets.get("FIREBASE_SERVICE_ACCOUNT_JSON")
+            if sa_secret is not None:
+                source = "st.secrets.FIREBASE_SERVICE_ACCOUNT_JSON"
         except Exception:
             sa_secret = None
 
@@ -210,9 +230,17 @@ def get_firebase_service_account_data():
                 fb = None
             if isinstance(fb, dict):
                 sa_secret = fb.get("service_account") or fb.get("serviceAccount")
+                if sa_secret is not None:
+                    source = "st.secrets.firebase.service_account"
 
     if sa_secret is None:
         return None
+
+    if source is not None:
+        try:
+            st.session_state.firebase_service_account_source = source
+        except Exception:
+            pass
 
     service_account = _parse_service_account_secret(sa_secret)
     if not isinstance(service_account, dict):
