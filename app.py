@@ -101,11 +101,19 @@ def normalize_api_key(key: str) -> str:
 
 def _normalize_private_key_string(private_key: str) -> str:
     if not isinstance(private_key, str):
-        return private_key
-    private_key = private_key.replace("\r\n", "\n").replace("\r", "\n")
-    if "\\n" in private_key and "-----BEGIN" in private_key:
-        private_key = private_key.replace("\\n", "\n")
-    return private_key
+        raise ValueError("Firebase private_key must be a string.")
+
+    key = private_key.replace("\\r\\n", "\\n").replace("\\r", "\\n")
+    key = key.replace("\r\n", "\n").replace("\r", "\n")
+    key = key.replace("\\n", "\n")
+    key = key.strip()
+
+    if "-----BEGIN PRIVATE KEY-----" not in key or "-----END PRIVATE KEY-----" not in key:
+        raise ValueError(
+            "Firebase private_key is not a valid PEM block. "
+            "It should contain BEGIN PRIVATE KEY and END PRIVATE KEY markers."
+        )
+    return key
 
 
 def _escape_private_key_in_raw_json(raw_json: str) -> str:
@@ -159,62 +167,69 @@ def _parse_service_account_secret(secret):
     raise ValueError("Firebase service account secret must be a JSON string or a dictionary.")
 
 
+def _validate_service_account_data(service_account: dict) -> dict:
+    if not isinstance(service_account, dict):
+        raise ValueError("Firebase service account data must be a JSON object.")
+
+    required_keys = [
+        "type",
+        "project_id",
+        "private_key_id",
+        "private_key",
+        "client_email",
+        "client_id",
+        "auth_uri",
+        "token_uri",
+    ]
+    missing = [key for key in required_keys if not service_account.get(key)]
+    if missing:
+        raise ValueError(
+            "Firebase service account JSON is missing required keys: "
+            + ", ".join(missing)
+        )
+    return service_account
+
+
+def get_firebase_service_account_data():
+    sa_secret = None
+    try:
+        sa_secret = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
+    except Exception:
+        sa_secret = None
+
+    if not sa_secret and hasattr(st, "secrets") and st.secrets is not None:
+        try:
+            sa_secret = st.secrets.get("FIREBASE_SERVICE_ACCOUNT_JSON")
+        except Exception:
+            sa_secret = None
+
+        if not sa_secret:
+            try:
+                fb = st.secrets.get("firebase")
+            except Exception:
+                fb = None
+            if isinstance(fb, dict):
+                sa_secret = fb.get("service_account") or fb.get("serviceAccount")
+
+    if sa_secret is None:
+        return None
+
+    service_account = _parse_service_account_secret(sa_secret)
+    if not isinstance(service_account, dict):
+        raise ValueError("Parsed Firebase service account data is not a JSON object.")
+
+    service_account = _validate_service_account_data(service_account)
+    service_account["private_key"] = _normalize_private_key_string(
+        service_account["private_key"]
+    )
+
+    return service_account
+
+
 def get_firebase_service_account_path():
     env_path = normalize_api_key(os.getenv(FIREBASE_SERVICE_ACCOUNT_ENV, ""))
     if env_path:
         return Path(env_path)
-
-    sa_json = None
-    try:
-        sa_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
-    except Exception:
-        sa_json = None
-
-    if not sa_json:
-        try:
-            if hasattr(st, "secrets") and st.secrets is not None:
-                try:
-                    sa_json = st.secrets["FIREBASE_SERVICE_ACCOUNT_JSON"]
-                except Exception:
-                    sa_json = None
-                if not sa_json:
-                    try:
-                        fb = st.secrets["firebase"]
-                    except Exception:
-                        fb = None
-                    if isinstance(fb, dict):
-                        if fb.get("service_account"):
-                            sa_json = fb["service_account"]
-                        elif fb.get("serviceAccount"):
-                            sa_json = fb["serviceAccount"]
-        except Exception:
-            sa_json = None
-
-    if sa_json is not None:
-        try:
-            service_account = _parse_service_account_secret(sa_json)
-            if not isinstance(service_account, dict):
-                raise ValueError("Parsed Firebase service account data is not a JSON object.")
-
-            if service_account.get("private_key"):
-                service_account["private_key"] = _normalize_private_key_string(
-                    service_account["private_key"]
-                )
-
-            if not service_account.get("private_key") or not isinstance(service_account["private_key"], str):
-                raise ValueError("Firebase service account JSON must include a valid private_key string.")
-
-            tf = tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json", encoding="utf-8")
-            tf.write(json.dumps(service_account))
-            tf.close()
-            return Path(tf.name)
-        except Exception as exc:
-            raise ValueError(
-                "Invalid Firebase service account JSON. "
-                "Please verify FIREBASE_SERVICE_ACCOUNT_JSON in Streamlit secrets or environment. "
-                f"Error: {exc}"
-            )
-
     return FIREBASE_SERVICE_ACCOUNT_FILE
 
 
@@ -235,13 +250,25 @@ def initialize_firebase():
         if firebase_admin._apps:
             firebase_app = firebase_admin.get_app()
         else:
-            sa_path = get_firebase_service_account_path()
-            if not sa_path.exists():
-                raise FileNotFoundError(
-                    f"Firebase service account file not found: {sa_path}. "
-                    "Set FIREBASE_SERVICE_ACCOUNT_PATH or place firebase_service_account.json next to app.py."
+            svc_data = None
+            try:
+                svc_data = get_firebase_service_account_data()
+            except Exception as parse_exc:
+                raise ValueError(
+                    "Unable to parse Firebase service account data. "
+                    f"{parse_exc}"
                 )
-            cred = credentials.Certificate(str(sa_path))
+
+            if svc_data is not None:
+                cred = credentials.Certificate(svc_data)
+            else:
+                sa_path = get_firebase_service_account_path()
+                if not sa_path.exists():
+                    raise FileNotFoundError(
+                        f"Firebase service account file not found: {sa_path}. "
+                        "Set FIREBASE_SERVICE_ACCOUNT_PATH or place firebase_service_account.json next to app.py."
+                    )
+                cred = credentials.Certificate(str(sa_path))
             firebase_app = firebase_admin.initialize_app(cred)
         firestore_client = firestore.client()
         return firestore_client
@@ -250,15 +277,17 @@ def initialize_firebase():
         if "Unable to load PEM file" in message or "InvalidData" in message:
             message = (
                 "Firebase service account PEM is malformed or contains invalid line endings. "
-                "Verify that FIREBASE_SERVICE_ACCOUNT_JSON is valid JSON and that the private_key has proper newlines. "
+                "Verify that FIREBASE_SERVICE_ACCOUNT_JSON is valid JSON and that the private_key is a correctly encoded PEM string. "
                 f"Original error: {message}"
             )
-        elif "Invalid Firebase service account JSON" in message:
+        elif "Invalid Firebase service account JSON" in message or "Unable to parse Firebase service account data" in message:
             message = (
                 "Firebase service account data is invalid. "
-                "Verify the JSON syntax in FIREBASE_SERVICE_ACCOUNT_JSON or Streamlit secret. "
+                "Verify the JSON syntax in FIREBASE_SERVICE_ACCOUNT_JSON or Streamlit secrets. "
                 f"Original error: {message}"
             )
+        elif "No Firebase App" in message or "Already exists" in message:
+            message = f"Firebase app initialization failed: {message}"
         st.session_state.firebase_error = message
         return None
 
