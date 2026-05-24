@@ -17,14 +17,13 @@ try:
 except ImportError:
     bcrypt = None
 try:
-    import firebase_admin
-    from firebase_admin import credentials, firestore
-    FIREBASE_IMPORT_ERROR = None
-except Exception as e:
-    firebase_admin = None
-    credentials = None
-    firestore = None
-    FIREBASE_IMPORT_ERROR = str(e)
+    pass
+except Exception:
+    pass
+firebase_admin = None
+credentials = None
+firestore = None
+FIREBASE_IMPORT_ERROR = "Firebase removed; using Supabase/local."
 try:
     from supabase import create_client
     SUPABASE_IMPORT_ERROR = None
@@ -103,7 +102,7 @@ def _supabase_save_user(account: dict) -> bool:
         return True
     except Exception as exc:
         try:
-            st.session_state.firebase_error = f"Supabase save error: {exc}"
+            st.session_state.backend_error = f"Supabase save error: {exc}"
         except Exception:
             pass
         return False
@@ -192,260 +191,46 @@ def save_users(users):
         return False
 
 
-FIREBASE_SERVICE_ACCOUNT_FILE = Path(__file__).resolve().parent / "firebase_service_account.json"
-FIREBASE_SERVICE_ACCOUNT_ENV = "FIREBASE_SERVICE_ACCOUNT_PATH"
-firebase_app = None
-firestore_client = None
-
-
-def normalize_api_key(key: str) -> str:
-    return (key or "").strip()
-
-
-def _normalize_private_key_string(private_key: str) -> str:
-    if not isinstance(private_key, str):
-        raise ValueError("Firebase private_key must be a string.")
-
-    key = private_key.replace("\\r\\n", "\\n").replace("\\r", "\\n")
-    key = key.replace("\r\n", "\n").replace("\r", "\n")
-    key = key.replace("\\n", "\n")
-    key = key.strip()
-
-    begin_marker = "-----BEGIN PRIVATE KEY-----"
-    end_marker = "-----END PRIVATE KEY-----"
-    if begin_marker not in key or end_marker not in key:
-        raise ValueError(
-            "Firebase private_key is not a valid PEM block. "
-            "It should contain BEGIN PRIVATE KEY and END PRIVATE KEY markers."
-        )
-
-    start = key.index(begin_marker) + len(begin_marker)
-    end = key.index(end_marker)
-    body = key[start:end].strip()
-    import re as _re
-
-    cleaned_body = _re.sub(r"[^A-Za-z0-9+/=]", "", body)
-    if not cleaned_body:
-        raise ValueError("Firebase private_key PEM content is empty after sanitization.")
-
-    remainder = len(cleaned_body) % 4
-    if remainder:
-        cleaned_body += "=" * (4 - remainder)
-
-    try:
-        decoded = base64.b64decode(cleaned_body, validate=True)
-    except Exception as exc:
-        raise ValueError(
-            "Firebase private_key PEM base64 body is invalid. "
-            f"Original base64 error: {exc}"
-        )
-
-    encoded = base64.b64encode(decoded).decode("ascii")
-    wrapped_body = "\n".join([encoded[i : i + 64] for i in range(0, len(encoded), 64)])
-    normalized = f"{begin_marker}\n{wrapped_body}\n{end_marker}\n"
-    return normalized
-
-
-def _escape_private_key_in_raw_json(raw_json: str) -> str:
-    key_marker = '"private_key"'
-    key_index = raw_json.find(key_marker)
-    if key_index == -1:
-        raise ValueError("Missing private_key field in Firebase service account text.")
-
-    colon_index = raw_json.find(":", key_index + len(key_marker))
-    if colon_index == -1:
-        raise ValueError("Malformed Firebase service account text.")
-
-    quote_index = raw_json.find('"', colon_index)
-    if quote_index == -1:
-        raise ValueError("Malformed Firebase service account text.")
-
-    start_index = quote_index + 1
-    i = start_index
-    while i < len(raw_json):
-        if raw_json[i] == '"':
-            backslashes = 0
-            j = i - 1
-            while j >= start_index and raw_json[j] == "\\":
-                backslashes += 1
-                j -= 1
-            if backslashes % 2 == 0:
-                private_key_value = raw_json[start_index:i]
-                escaped_key_value = (
-                    private_key_value
-                    .replace("\r\n", "\\n")
-                    .replace("\r", "\\n")
-                    .replace("\n", "\\n")
-                )
-                return raw_json[:start_index] + escaped_key_value + raw_json[i:]
-        i += 1
-    raise ValueError("Unable to normalize the private_key value in the service account JSON.")
-
-
-def _parse_service_account_secret(secret):
-    if isinstance(secret, dict):
-        return secret
-    if isinstance(secret, str):
-        raw_text = secret.strip()
-        try:
-            return json.loads(raw_text)
-        except json.JSONDecodeError:
-            if "private_key" not in raw_text:
-                raise
-            normalized = _escape_private_key_in_raw_json(raw_text)
-            return json.loads(normalized)
-    raise ValueError("Firebase service account secret must be a JSON string or a dictionary.")
-
-
-def _validate_service_account_data(service_account: dict) -> dict:
-    if not isinstance(service_account, dict):
-        raise ValueError("Firebase service account data must be a JSON object.")
-
-    required_keys = [
-        "type",
-        "project_id",
-        "private_key_id",
-        "private_key",
-        "client_email",
-        "client_id",
-        "auth_uri",
-        "token_uri",
-    ]
-    missing = [key for key in required_keys if not service_account.get(key)]
-    if missing:
-        raise ValueError(
-            "Firebase service account JSON is missing required keys: "
-            + ", ".join(missing)
-        )
-    return service_account
-
-
-def get_firebase_service_account_data():
-    sa_secret = None
-    source = None
-    try:
-        sa_secret = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
-        if sa_secret:
-            source = "env:FIREBASE_SERVICE_ACCOUNT_JSON"
-    except Exception:
-        sa_secret = None
-
-    if not sa_secret and hasattr(st, "secrets") and st.secrets is not None:
-        try:
-            sa_secret = st.secrets.get("FIREBASE_SERVICE_ACCOUNT_JSON")
-            if sa_secret is not None:
-                source = "st.secrets.FIREBASE_SERVICE_ACCOUNT_JSON"
-        except Exception:
-            sa_secret = None
-
-        if not sa_secret:
-            try:
-                fb = st.secrets.get("firebase")
-            except Exception:
-                fb = None
-            if isinstance(fb, dict):
-                sa_secret = fb.get("service_account") or fb.get("serviceAccount")
-                if sa_secret is not None:
-                    source = "st.secrets.firebase.service_account"
-
-    if sa_secret is None:
-        return None
-
-    if source is not None:
-        try:
-            st.session_state.firebase_service_account_source = source
-        except Exception:
-            pass
-
-    service_account = _parse_service_account_secret(sa_secret)
-    if not isinstance(service_account, dict):
-        raise ValueError("Parsed Firebase service account data is not a JSON object.")
-
-    service_account = _validate_service_account_data(service_account)
-    service_account["private_key"] = _normalize_private_key_string(
-        service_account["private_key"]
-    )
-
-    return service_account
-
-
-def get_firebase_service_account_path():
-    env_path = normalize_api_key(os.getenv(FIREBASE_SERVICE_ACCOUNT_ENV, ""))
-    if env_path:
-        return Path(env_path)
-    return FIREBASE_SERVICE_ACCOUNT_FILE
-
-
 def initialize_firebase():
-    global firebase_app, firestore_client
-    if firestore_client:
-        return firestore_client
-    if firebase_admin is None or firestore is None or credentials is None:
-        msg = "firebase-admin package is not installed. Install it with `pip install firebase-admin`."
-        try:
-            if FIREBASE_IMPORT_ERROR:
-                msg += f" Import error: {FIREBASE_IMPORT_ERROR}"
-        except NameError:
-            pass
-        st.session_state.firebase_error = msg
-        return None
+    # Firebase removed from this codebase; use Supabase or local JSON instead.
     try:
-        if firebase_admin._apps:
-            firebase_app = firebase_admin.get_app()
-        else:
-            svc_data = None
-            try:
-                svc_data = get_firebase_service_account_data()
-            except Exception as parse_exc:
-                raise ValueError(
-                    "Unable to parse Firebase service account data. "
-                    f"{parse_exc}"
-                )
-
-            if svc_data is not None:
-                cred = credentials.Certificate(svc_data)
-            else:
-                sa_path = get_firebase_service_account_path()
-                if not sa_path.exists():
-                    raise FileNotFoundError(
-                        f"Firebase service account file not found: {sa_path}. "
-                        "Set FIREBASE_SERVICE_ACCOUNT_PATH or place firebase_service_account.json next to app.py."
-                    )
-                cred = credentials.Certificate(str(sa_path))
-            firebase_app = firebase_admin.initialize_app(cred)
-        firestore_client = firestore.client()
-        return firestore_client
-    except Exception as exc:
-        message = str(exc)
-        if "Unable to load PEM file" in message or "InvalidData" in message:
-            message = (
-                "Firebase service account PEM is malformed or contains invalid line endings. "
-                "Verify that FIREBASE_SERVICE_ACCOUNT_JSON is valid JSON and that the private_key is a correctly encoded PEM string. "
-                f"Original error: {message}"
-            )
-        elif "Invalid Firebase service account JSON" in message or "Unable to parse Firebase service account data" in message:
-            message = (
-                "Firebase service account data is invalid. "
-                "Verify the JSON syntax in FIREBASE_SERVICE_ACCOUNT_JSON or Streamlit secrets. "
-                f"Original error: {message}"
-            )
-        elif "No Firebase App" in message or "Already exists" in message:
-            message = f"Firebase app initialization failed: {message}"
-        st.session_state.firebase_error = message
-        return None
+        st.session_state.backend_error = "Firebase support has been removed. Using Supabase/local storage."
+    except Exception:
+        pass
+    return None
 
 
 def get_firestore_client():
-    client = initialize_firebase()
-    if client is None:
-        raise RuntimeError(
-            "Firebase is not initialized. Check your service account JSON file and FIREBASE_SERVICE_ACCOUNT_PATH."
-        )
-    return client
+    raise RuntimeError("Firebase has been removed from this application.")
 
 
 def get_users_collection():
-    return get_firestore_client().collection("users")
+    raise RuntimeError("Firebase has been removed from this application.")
+
+
+def get_firebase_service_account_data():
+    # Firebase removed; no service account data available.
+    try:
+        st.session_state.backend_error = "Firebase service account support removed."
+    except Exception:
+        pass
+    return None
+
+
+def initialize_firebase():
+    try:
+        st.session_state.backend_error = "Firebase support removed; using Supabase/local storage."
+    except Exception:
+        pass
+    return None
+
+
+def get_firestore_client():
+    raise RuntimeError("Firebase has been removed from this application. Use Supabase or local storage instead.")
+
+
+def get_users_collection():
+    raise RuntimeError("Firebase has been removed from this application. Use Supabase or local storage instead.")
 
 
 def hash_password(password: str) -> str:
@@ -532,15 +317,16 @@ def save_firebase_user(account: dict) -> bool:
     doc_id = str(account.get("id") or account.get("username"))
     if is_supabase_configured():
         return _supabase_save_user(account)
-
-    db = initialize_firebase()
-    if db is None:
-        return False
+    # Fallback to local JSON storage
     try:
-        get_users_collection().document(doc_id).set(account)
-        return True
+        users = load_users()
+        users[doc_id] = account
+        return save_users(users)
     except Exception as exc:
-        st.session_state.firebase_error = str(exc)
+        try:
+            st.session_state.backend_error = str(exc)
+        except Exception:
+            pass
         return False
 
 
@@ -1092,8 +878,8 @@ if "current_user_id" not in st.session_state:
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 
-if "firebase_error" not in st.session_state:
-    st.session_state.firebase_error = ""
+if "backend_error" not in st.session_state:
+    st.session_state.backend_error = ""
 
 if "guest_chats" not in st.session_state:
     st.session_state.guest_chats = [{"title": "Guest Chat", "messages": []}]
@@ -2920,8 +2706,8 @@ with left_col:
                 rerun_app()
         st.markdown(f"<div style='margin-top: 12px; font-size: 14px; color: #b5f0d0;'>Signed in as <strong>{escape_html(current_username)}</strong></div>", unsafe_allow_html=True)
     elif st.session_state.show_login_fields:
-        if st.session_state.firebase_error:
-            st.error(f"Firebase initialization error: {st.session_state.firebase_error}")
+        if st.session_state.backend_error:
+            st.error(f"Database initialization error: {st.session_state.backend_error}")
         login_id = st.text_input("Username", key="login_id")
         login_pwd = st.text_input("Password", type="password", key="login_pwd")
         col1, col2 = st.columns(2)
@@ -2939,23 +2725,19 @@ with left_col:
                     st.success("Developer Mode Activated")
                     rerun_app()
                 else:
-                    db = initialize_firebase()
-                    if db is None:
-                        st.error("Firebase is not configured. Contact the administrator.")
+                    account = find_account_by_credentials(username, password)
+                    if account is None:
+                        st.error("Username or password is incorrect")
                     else:
-                        account = find_account_by_credentials(username, password)
-                        if account is None:
-                            st.error("Username or password is incorrect")
-                        else:
-                            st.session_state.current_account_id = account.get("id", "")
-                            st.session_state.current_user_id = username
-                            st.session_state._cached_current_account = account
-                            st.session_state.logged_in = True
-                            st.session_state.user_role = "user"
-                            st.session_state.active_chat = 0
-                            st.session_state.show_login_fields = False
-                            st.success("Login successful")
-                            rerun_app()
+                        st.session_state.current_account_id = account.get("id", "")
+                        st.session_state.current_user_id = username
+                        st.session_state._cached_current_account = account
+                        st.session_state.logged_in = True
+                        st.session_state.user_role = "user"
+                        st.session_state.active_chat = 0
+                        st.session_state.show_login_fields = False
+                        st.success("Login successful")
+                        rerun_app()
         with col2:
             if st.button("Register", key="register_button"):
                 username = login_id.strip()
@@ -2963,10 +2745,7 @@ with left_col:
                 if not username or not password:
                     st.error("Username and password are required.")
                 else:
-                    db = initialize_firebase()
-                    if db is None:
-                        st.error("Firebase is not configured. Contact the administrator.")
-                    elif is_password_taken(password):
+                    if is_password_taken(password):
                         st.error("can't register this ID")
                     else:
                         existing_passkeys = [u.get("passkey") for u in load_accounts() if u.get("passkey")]
@@ -2977,7 +2756,7 @@ with left_col:
                         )
                         new_account["password_hash"] = hash_password(password)
                         new_account.pop("password", None)
-                        if save_firebase_user(new_account):
+                        if persist_user(new_account):
                             st.session_state.current_account_id = new_account.get("id", "")
                             st.session_state.current_user_id = username
                             st.session_state._cached_current_account = new_account
