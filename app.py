@@ -162,21 +162,25 @@ except Exception:
 
 API_KEY_SLOTS = [
     {
-        "key": "NEW_KEY_1",
+        "key": "AIzaSyADxlaE5Vw58YqDIF6WXmY48NaweIT1cGo",
         "name": "Primary",
         "model": "gemini-3.1-flash-lite",
     },
     {
-        "key": "NEW_KEY_2",
+        "key": "GEMINI_API_KEY_2",
         "name": "Secondary",
         "model": "gemini-2.5-flash-lite",
     },
     {
-        "key": "NEW_KEY_3",
+        "key": "GEMINI_API_KEY_3",
         "name": "Tertiary",
         "model": "gemini-2.5-flash-lite",
     },
 ]
+
+API_KEY_ENV_NAME = "GEMINI_API_KEY"
+
+API_KEY_ENV_NAME = "GOOGLE_API_KEY"
 
 # Streamlit page config
 st.set_page_config(
@@ -582,20 +586,30 @@ def normalize_api_key(key: str) -> str:
     return (key or "").strip()
 
 
+def get_env_api_key() -> str:
+    return normalize_api_key(os.getenv("GEMINI_API_KEY", ""))
+
+
 def get_api_slot(index: int) -> dict:
     return API_KEY_SLOTS[index] if 0 <= index < len(API_KEY_SLOTS) else API_KEY_SLOTS[0]
 
 
 def get_api_key(index: int) -> str:
-    return normalize_api_key(get_api_slot(index).get("key", ""))
+    slot_key = normalize_api_key(get_api_slot(index).get("key", ""))
+    return slot_key if slot_key else get_env_api_key()
 
 
 def get_available_api_slots():
-    return [
-        {**get_api_slot(idx), "index": idx, "key": get_api_key(idx)}
+    available = [
+        {**get_api_slot(idx), "index": idx, "key": normalize_api_key(get_api_slot(idx).get("key", ""))}
         for idx in range(len(API_KEY_SLOTS))
-        if get_api_key(idx)
+        if normalize_api_key(get_api_slot(idx).get("key", ""))
     ]
+    if not available:
+        env_key = get_env_api_key()
+        if env_key:
+            available.append({"key": env_key, "name": "Environment", "model": get_api_slot(0)["model"], "index": -1})
+    return available
 
 
 def get_effective_active_index() -> int:
@@ -702,55 +716,80 @@ def get_last_assistant_message():
     return None
 
 
-def configure_gemini_key(api_key: str):
-    genai.configure(api_key=api_key)
+def configure_gemini_key(api_key: str = None) -> str:
+    effective_api_key = normalize_api_key(api_key) or get_env_api_key()
+    if not effective_api_key:
+        raise RuntimeError(
+            "No Gemini API key configured. Set the GEMINI_API_KEY environment variable or configure a key in API_KEY_SLOTS."
+        )
+    genai.configure(api_key=effective_api_key)
+    return effective_api_key
 
 
 def attempt_generate_content(prompt, api_key, model_name, stream=False):
-    configure_gemini_key(api_key)
-    model = genai.GenerativeModel(model_name)
-    return model.generate_content(
-        prompt,
-        generation_config=genai.types.GenerationConfig(
-            max_output_tokens=1024,
-            temperature=0.7,
-        ),
-        stream=stream,
-    )
+    effective_key = None
+    try:
+        effective_key = configure_gemini_key(api_key)
+        model = genai.GenerativeModel(model_name)
+        response = model.generate_content(prompt)
+        return response
+    except Exception as exc:
+        error_text = str(exc)
+        raise
 
 
 def generate_answer(prompt, stream=False, attached_image_bytes=None):
-    available_slots = get_available_api_slots()
-    if not available_slots:
-        raise RuntimeError("No Gemini API key is available. Please contact the app owner.")
-
     contents = prompt
     if attached_image_bytes:
         parts = [prompt] if prompt else []
         parts.append({"inline_data": image_bytes_to_pil(attached_image_bytes)})
         contents = content_types.to_contents({"parts": parts})
 
+    env_api_key = get_env_api_key()
     last_exception = None
+
+    if env_api_key:
+        try:
+            response = attempt_generate_content(contents, env_api_key, "gemini-pro", stream=stream)
+            if stream:
+                return response, response
+            output = extract_response_text(response)
+            if output:
+                return output, response
+            return None, response
+        except Exception as exc:
+            last_exception = exc
+
     for slot in API_KEY_SLOTS:
-        api_key = get_api_key(API_KEY_SLOTS.index(slot))
+        api_key = normalize_api_key(get_api_slot(API_KEY_SLOTS.index(slot)).get("key", ""))
         if not api_key:
             continue
         try:
-            response = attempt_generate_content(
-                contents,
-                api_key,
-                slot["model"],
-                stream=stream,
-            )
+            response = attempt_generate_content(contents, api_key, slot["model"], stream=stream)
             st.session_state.active_api_index = API_KEY_SLOTS.index(slot)
             if stream:
                 return response, response
-            return extract_response_text(response), response
+            output = extract_response_text(response)
+            if output:
+                return output, response
+            return None, response
         except Exception as exc:
             last_exception = exc
             continue
 
-    raise last_exception or RuntimeError("Unable to generate a response with any configured Gemini API key.")
+    if last_exception:
+        raise last_exception
+    raise RuntimeError("Unable to generate a response with any configured Gemini API key.")
+
+
+def trigger_fallback_system(prompt, response=None):
+    print("[Gemini DEBUG] Fallback system triggered.")
+    print(f"[Gemini DEBUG] Prompt: {prompt}")
+    print(f"[Gemini DEBUG] Response object: {response}")
+    return (
+        "No response was returned from Gemini. "
+        "Please try again, check your API key, or use a different model."
+    )
 
 OWNER_ACCOUNT_ID = "owner_account"
 OWNER_USERNAME = "Reyaansh Sharma"
@@ -886,11 +925,11 @@ def get_user_context():
 
 
 def extract_response_text(response):
-    if response is None:
+    if not response:
         return None
 
     try:
-        if response.text:
+        if response and hasattr(response, "text") and response.text:
             return response.text
     except Exception:
         pass
@@ -1212,32 +1251,46 @@ def submit_user_message(user_prompt_text: str, attached_image_bytes=None):
             stream=False,
             attached_image_bytes=attached_image_bytes,
         )
+        # Ensure we always have a response to display
         if assistant_response:
-            add_assistant_message(assistant_response)
-            if account:
-                persist_user(account)
-            st.session_state.scroll_to_bottom = True
-            st.session_state.clear_message = True
-            st.session_state.attached_image_bytes = None
-            st.session_state.attached_image_name = ""
-            st.session_state.attached_image_type = ""
-            st.session_state.show_attach_uploader = False
-            return
-        prompt_feedback = getattr(api_response, "prompt_feedback", None)
-        feedback_text = str(prompt_feedback) if prompt_feedback else "No prompt feedback available."
-        st.error("Gemini returned an empty answer.")
-        st.info("This usually means the model response was blocked, filtered, or no text was returned.")
-        st.code(
-            f"Prompt feedback: {feedback_text}\nCandidates: {len(api_response.candidates) if hasattr(api_response, 'candidates') else 'N/A'}\nModel version: {getattr(api_response, 'model_version', 'unknown')}"
-        )
+            assistant_text = assistant_response
+        elif api_response:
+            # Try to extract text from API response
+            extracted = extract_response_text(api_response)
+            assistant_text = extracted or "API returned no text, but the request was processed."
+        else:
+            assistant_text = "No response from AI. Please try again."
+        
+        add_assistant_message(assistant_text)
+        if account:
+            persist_user(account)
+        st.session_state.scroll_to_bottom = True
+        st.session_state.clear_message = True
+        st.session_state.attached_image_bytes = None
+        st.session_state.attached_image_name = ""
+        st.session_state.attached_image_type = ""
+        st.session_state.show_attach_uploader = False
+        return
     except Exception as e:
         err_text = str(e)
+        # Add error message to chat so user can see what happened
         if "Quota exceeded" in err_text or "generate_content_free_tier_requests" in err_text:
-            st.error("Quota exceeded: your Gemini API key has no remaining free-tier quota. Enable billing or use a different API key with quota.")
-            st.info("Check your Google Cloud billing/plan and model quota at https://ai.google.dev/gemini-api/docs/rate-limits.")
+            error_msg = "Quota exceeded: your Gemini API key has no remaining free-tier quota. Enable billing or use a different API key with quota."
+        elif "API key" in err_text or "authentication" in err_text.lower():
+            error_msg = f"API key error: {err_text}. Please check your configuration."
         else:
-            st.error(f"Error: {err_text}")
-            st.info("Please check your API key and try again.")
+            error_msg = f"Error: {err_text}. Please try again."
+        
+        add_assistant_message(error_msg)
+        if account:
+            persist_user(account)
+        st.session_state.scroll_to_bottom = True
+        st.session_state.clear_message = True
+        st.session_state.attached_image_bytes = None
+        st.session_state.attached_image_name = ""
+        st.session_state.attached_image_type = ""
+        st.session_state.show_attach_uploader = False
+        return
 
 
 def can_create_new_chat() -> bool:
@@ -2115,6 +2168,7 @@ with left_col:
         st.session_state.scroll_to_bottom = False
 
     if st.session_state.clear_message:
+        st.session_state.user_input = ""
         st.session_state.message_text = ""
         st.session_state.clear_message = False
         st.session_state.attached_image_bytes = None
@@ -2127,18 +2181,17 @@ with left_col:
     with msg_col:
         st.write("### Your message")
         st.markdown("<div style='color:#a3a3a3; font-size:14px; margin-bottom:8px;'>Press Ctrl + Enter to send your message.</div>", unsafe_allow_html=True)
-        message_text = st.text_area(
+        user_input = st.text_input(
             "",
-            value=st.session_state.message_text,
-            height=140,
+            value=st.session_state.get("user_input", ""),
             placeholder="Write your message here. Press Send when ready.",
-            key="message_text",
+            key="user_input",
         )
 
         send_col, mic_col, voice_col, attach_col = st.columns([1.1, 0.8, 1, 1])
         with send_col:
-            if st.button("Send", key="send_button") and (message_text.strip() or st.session_state.attached_image_bytes):
-                user_prompt_text = message_text.strip() or "Please review the attached image and answer my query."
+            if st.button("Send", key="send_button") and (user_input.strip() or st.session_state.attached_image_bytes):
+                user_prompt_text = user_input.strip() or "Please review the attached image and answer my query."
                 submit_user_message(user_prompt_text, st.session_state.attached_image_bytes)
                 rerun_app()
 
