@@ -500,17 +500,17 @@ except Exception:
 
 API_KEY_SLOTS = [
     {
-        "key": "1NEW_KEY_1",
+        "key": "GEMINIAPIKEY1",
         "name": "Primary",
         "model": "gemini-3.1-flash-lite",
     },
     {
-        "key": "2NEW_KEY_2",
+        "key": "GEMINIAPIKEY2",
         "name": "Secondary",
         "model": "gemini-2.5-flash-lite",
     },
     {
-        "key": "3NEW_KEY_3",
+        "key": "GEMINIAPIKEY3",
         "name": "Tertiary",
         "model": "gemini-2.5-flash-lite",
     },
