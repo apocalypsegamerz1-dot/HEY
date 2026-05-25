@@ -1,6 +1,58 @@
 <!DOCTYPE html>
 <html>
-<body style="background:black;color:white;text-align:center;">
-<h1>WORKING ✅</h1>
+<head>
+  <title>HEY AI</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial;
+      background: linear-gradient(to right, #0f2027, #203a43, #2c5364);
+      color: white;
+      text-align: center;
+    }
+    h1 {
+      margin-top: 30px;
+    }
+    p {
+      color: #ccc;
+    }
+    iframe {
+      width: 95%;
+      height: 80vh;
+      border: none;
+      border-radius: 12px;
+      margin-top: 20px;
+    }
+    button {
+      padding: 12px 25px;
+      font-size: 18px;
+      margin: 20px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      background: #00c6ff;
+      color: black;
+    }
+    button:hover {
+      background: #00a2d6;
+    }
+  </style>
+</head>
+<body>
+
+<h1>HEY AI</h1>
+<p>Your smart AI assistant</p>
+
+<button onclick="openApp()">Open Full App</button>
+
+<iframe src="https://YOUR-STREAMLIT-LINK.streamlit.app"></iframe>
+
+<script>
+function openApp() {
+  window.open("https://YOUR-STREAMLIT-LINK.streamlit.app", "_blank");
+}
+</script>
+
 </body>
 </html>
