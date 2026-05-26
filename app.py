@@ -12,6 +12,9 @@ import re
 import json
 import uuid
 from pathlib import Path
+import streamlit as st
+
+st.write("Secrets loaded:", st.secrets)
 try:
     import bcrypt
 except ImportError:
