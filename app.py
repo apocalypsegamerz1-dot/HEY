@@ -35,25 +35,37 @@ except Exception as e:
 supabase_client = None
 
 
+def _get_supabase_credential(name: str) -> str:
+    name = name.upper().strip()
+    value = os.getenv(name, "")
+    if value:
+        return value.strip()
+    try:
+        if hasattr(st, "secrets") and st.secrets is not None:
+            # support top-level secret names
+            value = st.secrets.get(name, "")
+            if value:
+                return str(value).strip()
+            # support nested [SUPABASE] section
+            nested = st.secrets.get("SUPABASE") or st.secrets.get("supabase")
+            if isinstance(nested, dict):
+                value = nested.get(name) or nested.get(name.lower())
+                if value:
+                    return str(value).strip()
+    except Exception:
+        pass
+    return ""
+
+
 def is_supabase_configured():
     # Check env first, then Streamlit secrets
     # If the supabase client import failed, treat as not configured
     if create_client is None:
         return False
 
-    url = os.getenv("SUPABASE_URL")
-    key = os.getenv("SUPABASE_KEY")
-    if url and key:
-        return True
-    try:
-        if hasattr(st, "secrets") and st.secrets is not None:
-            s_url = st.secrets.get("SUPABASE_URL")
-            s_key = st.secrets.get("SUPABASE_KEY")
-            if s_url and s_key:
-                return True
-    except Exception:
-        pass
-    return False
+    url = _get_supabase_credential("SUPABASE_URL")
+    key = _get_supabase_credential("SUPABASE_KEY")
+    return bool(url and key)
 
 
 def get_supabase_client():
@@ -62,14 +74,9 @@ def get_supabase_client():
         return supabase_client
     if create_client is None:
         raise RuntimeError("supabase-py is not installed. Add it to requirements.txt (supabase==1.0.0 or supabase-py)")
-    url = os.getenv("SUPABASE_URL")
-    key = os.getenv("SUPABASE_KEY")
-    if (not url or not key) and hasattr(st, "secrets") and st.secrets is not None:
-        try:
-            url = url or st.secrets.get("SUPABASE_URL")
-            key = key or st.secrets.get("SUPABASE_KEY")
-        except Exception:
-            pass
+
+    url = _get_supabase_credential("SUPABASE_URL")
+    key = _get_supabase_credential("SUPABASE_KEY")
     if not url or not key:
         raise RuntimeError("Supabase credentials not found in env or st.secrets")
     try:
