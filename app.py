@@ -12,7 +12,6 @@ import re
 import json
 import uuid
 from pathlib import Path
-from supabase import create_client
 try:
     import bcrypt
 except ImportError:
@@ -517,9 +516,8 @@ API_KEY_SLOTS = [
     },
 ]
 
-API_KEY_ENV_NAME = "GEMINI_API_KEY"
-
-API_KEY_ENV_NAME = "GOOGLE_API_KEY"
+GEMINI_API_KEY_NAMES = ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
+GEMINI_CONFIGURED_API_KEY = None
 
 # Streamlit page config
 st.set_page_config(
@@ -931,7 +929,19 @@ if "dev_code_snippet" not in st.session_state:
     st.session_state.dev_code_snippet = ""
 
 def get_env_api_key() -> str:
-    return normalize_api_key(os.getenv("GEMINI_API_KEY", ""))
+    for env_name in GEMINI_API_KEY_NAMES:
+        key = normalize_api_key(os.getenv(env_name, ""))
+        if key:
+            return key
+    try:
+        if hasattr(st, "secrets") and st.secrets is not None:
+            for secret_name in GEMINI_API_KEY_NAMES:
+                key = normalize_api_key(st.secrets.get(secret_name, ""))
+                if key:
+                    return key
+    except Exception:
+        pass
+    return ""
 
 
 def normalize_api_key(key: str) -> str:
@@ -941,25 +951,43 @@ def normalize_api_key(key: str) -> str:
         return ""
 
 
+def resolve_api_key(key: str) -> str:
+    key = normalize_api_key(key)
+    if not key:
+        return get_env_api_key()
+    env_value = normalize_api_key(os.getenv(key, ""))
+    if env_value:
+        return env_value
+    try:
+        if hasattr(st, "secrets") and st.secrets is not None:
+            secret_value = st.secrets.get(key)
+            if secret_value:
+                return normalize_api_key(secret_value)
+    except Exception:
+        pass
+    return key
+
+
 def get_api_slot(index: int) -> dict:
     return API_KEY_SLOTS[index] if 0 <= index < len(API_KEY_SLOTS) else API_KEY_SLOTS[0]
 
 
 def get_api_key(index: int) -> str:
-    slot_key = normalize_api_key(get_api_slot(index).get("key", ""))
-    return slot_key if slot_key else get_env_api_key()
+    return resolve_api_key(get_api_slot(index).get("key", ""))
 
 
 def get_available_api_slots():
-    available = [
-        {**get_api_slot(idx), "index": idx, "key": normalize_api_key(get_api_slot(idx).get("key", ""))}
-        for idx in range(len(API_KEY_SLOTS))
-        if normalize_api_key(get_api_slot(idx).get("key", ""))
-    ]
-    if not available:
-        env_key = get_env_api_key()
-        if env_key:
-            available.append({"key": env_key, "name": "Environment", "model": get_api_slot(0)["model"], "index": -1})
+    available = []
+    env_key = get_env_api_key()
+    if env_key:
+        available.append({"key": env_key, "name": "Environment", "model": get_api_slot(0)["model"], "index": -1})
+
+    for idx in range(len(API_KEY_SLOTS)):
+        slot = get_api_slot(idx)
+        slot_key = resolve_api_key(slot.get("key", ""))
+        if not slot_key or slot_key == env_key:
+            continue
+        available.append({"key": slot_key, "name": slot["name"], "model": slot["model"], "index": idx})
     return available
 
 
@@ -1068,25 +1096,25 @@ def get_last_assistant_message():
 
 
 def configure_gemini_key(api_key: str = None) -> str:
-    effective_api_key = normalize_api_key(api_key) or get_env_api_key()
+    effective_api_key = resolve_api_key(api_key)
     if not effective_api_key:
         raise RuntimeError(
-            "No Gemini API key configured. Set the GEMINI_API_KEY environment variable or configure a key in API_KEY_SLOTS."
+            "No Gemini API key configured. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable or configure a key in API_KEY_SLOTS."
         )
-    genai.configure(api_key=effective_api_key)
+
+    global GEMINI_CONFIGURED_API_KEY
+    if GEMINI_CONFIGURED_API_KEY != effective_api_key:
+        genai.configure(api_key=effective_api_key)
+        GEMINI_CONFIGURED_API_KEY = effective_api_key
     return effective_api_key
 
 
 def attempt_generate_content(prompt, api_key, model_name, stream=False):
-    effective_key = None
-    try:
-        effective_key = configure_gemini_key(api_key)
-        model = genai.GenerativeModel(model_name)
-        response = model.generate_content(prompt)
-        return response
-    except Exception as exc:
-        error_text = str(exc)
-        raise
+    effective_key = resolve_api_key(api_key)
+    effective_key = configure_gemini_key(effective_key)
+    model = genai.GenerativeModel(model_name)
+    response = model.generate_content(prompt)
+    return response
 
 
 def generate_answer(prompt, stream=False, attached_image_bytes=None):
@@ -1096,28 +1124,19 @@ def generate_answer(prompt, stream=False, attached_image_bytes=None):
         parts.append({"inline_data": image_bytes_to_pil(attached_image_bytes)})
         contents = content_types.to_contents({"parts": parts})
 
-    env_api_key = get_env_api_key()
+    available_slots = get_available_api_slots()
     last_exception = None
 
-    if env_api_key:
-        try:
-            response = attempt_generate_content(contents, env_api_key, "gemini-pro", stream=stream)
-            if stream:
-                return response, response
-            output = extract_response_text(response)
-            if output:
-                return output, response
-            return None, response
-        except Exception as exc:
-            last_exception = exc
+    if not available_slots:
+        raise RuntimeError(
+            "No Gemini API key configured. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable or configure a key in API_KEY_SLOTS."
+        )
 
-    for slot in API_KEY_SLOTS:
-        api_key = normalize_api_key(get_api_slot(API_KEY_SLOTS.index(slot)).get("key", ""))
-        if not api_key:
-            continue
+    for slot in available_slots:
         try:
-            response = attempt_generate_content(contents, api_key, slot["model"], stream=stream)
-            st.session_state.active_api_index = API_KEY_SLOTS.index(slot)
+            response = attempt_generate_content(contents, slot["key"], slot["model"], stream=stream)
+            if slot["index"] >= 0:
+                st.session_state.active_api_index = slot["index"]
             if stream:
                 return response, response
             output = extract_response_text(response)
