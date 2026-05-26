@@ -72,8 +72,12 @@ def get_supabase_client():
             pass
     if not url or not key:
         raise RuntimeError("Supabase credentials not found in env or st.secrets")
-    supabase_client = create_client(url, key)
-    return supabase_client
+    try:
+        supabase_client = create_client(url, key)
+        return supabase_client
+    except Exception as exc:
+        supabase_client = None
+        raise RuntimeError(f"Supabase initialization failed: {exc}") from exc
 
 
 def _supabase_find_accounts_by_username(username: str) -> list:
@@ -105,6 +109,12 @@ def _supabase_save_user(account: dict) -> bool:
         client.table("users").upsert(payload).execute()
         return True
     except Exception as exc:
+        if "Invalid API key" in str(exc) or "authentication" in str(exc).lower():
+            try:
+                global supabase_client
+                supabase_client = None
+            except Exception:
+                pass
         try:
             st.session_state.backend_error = f"Supabase save error: {exc}"
         except Exception:
@@ -318,8 +328,10 @@ def save_firebase_user(account: dict) -> bool:
         return False
     doc_id = str(account.get("id") or account.get("username"))
     if is_supabase_configured():
-        return _supabase_save_user(account)
-    # Fallback to local JSON storage
+        success = _supabase_save_user(account)
+        if success:
+            return True
+        # Fall back to local JSON storage if Supabase fails
     try:
         users = load_users()
         users[doc_id] = account
@@ -369,8 +381,22 @@ def save_accounts(accounts):
 def persist_user(account):
     if not account or "username" not in account:
         return False
+    success = False
     if is_supabase_configured():
         success = _supabase_save_user(account)
+        if not success:
+            # Fall back to local JSON storage if Supabase is unavailable
+            try:
+                users = load_users()
+                key = account.get("id") or account.get("username")
+                if key:
+                    users[str(key)] = account
+                    success = save_users(users)
+            except Exception as exc:
+                try:
+                    st.session_state.backend_error = str(exc)
+                except Exception:
+                    pass
     else:
         # Save to local JSON storage
         users = load_users()
