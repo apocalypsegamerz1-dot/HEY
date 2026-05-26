@@ -12,9 +12,17 @@ import re
 import json
 import uuid
 from pathlib import Path
+import google.generativeai as genai
 import streamlit as st
 
-st.write("Secrets loaded:", st.secrets)
+genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+
+try:
+    model = genai.GenerativeModel("gemini-pro")
+    response = model.generate_content("Hello")
+    st.write(response.text)
+except Exception as e:
+    st.error(e)
 try:
     import bcrypt
 except ImportError:
