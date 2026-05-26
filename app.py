@@ -2548,7 +2548,15 @@ with left_col:
     if active_chats:
         active_chat = active_chats[st.session_state.active_chat]
         if not active_chat["messages"]:
-            chat_html += "<div style='color: #b5b5b5; font-size: 15px;'>Start your conversation with HEY. Type a message below and click Send.</div>"
+            chat_html += (
+                "<div style='display:flex; justify-content:center; align-items:center; "
+                "height:240px; text-align:center; padding:40px;'>"
+                "<div>"
+                "<div style='font-size:42px; font-weight:900; color:#ffffff; margin-bottom:20px;'>HEY-ask and play,every day</div>"
+                "<div style='color:#c7c7c7; font-size:18px;'>Start your conversation by typing a message below.</div>"
+                "</div>"
+                "</div>"
+            )
         for message in active_chat["messages"]:
                 role_class = "user" if message["role"] == "user" else "assistant"
                 chat_html += f"<div class='chat-box {role_class}'>"
