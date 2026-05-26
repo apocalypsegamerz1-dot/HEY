@@ -12,15 +12,16 @@ import re
 import json
 import uuid
 from pathlib import Path
-import google.generativeai as genai
+from supabase import create_client
 import streamlit as st
 
-genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+url = st.secrets["SUPABASE_URL"]
+key = st.secrets["SUPABASE_KEY"]
 
 try:
-    model = genai.GenerativeModel("gemini-pro")
-    response = model.generate_content("Hello")
-    st.write(response.text)
+    supabase = create_client(url, key)
+    data = supabase.table("your_table").select("*").execute()
+    st.write(data)
 except Exception as e:
     st.error(e)
 try:
