@@ -13,17 +13,6 @@ import json
 import uuid
 from pathlib import Path
 from supabase import create_client
-import streamlit as st
-
-url = st.secrets["SUPABASE_URL"]
-key = st.secrets["SUPABASE_KEY"]
-
-try:
-    supabase = create_client(url, key)
-    data = supabase.table("your_table").select("*").execute()
-    st.write(data)
-except Exception as e:
-    st.error(e)
 try:
     import bcrypt
 except ImportError:
