@@ -63,8 +63,8 @@ def is_supabase_configured():
     if create_client is None:
         return False
 
-    url = _get_supabase_credential("https://otnmgowsrxxtkspryqgj.supabase.co")
-    key = _get_supabase_credential("sb_publishable_rkXbNKJD_uUILcu9Yoj-xw_IiJ713F5")
+    url = _get_supabase_credential("SUPABASE_URL")
+    key = _get_supabase_credential("SUPABASE_KEY")
     return bool(url and key)
 
 
@@ -620,6 +620,51 @@ st.markdown("""
             border-color: #3b3b7f;
         }
 
+        .typing-indicator {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: rgba(16, 18, 48, 0.95);
+            border: 1px solid #3b3b7f;
+            border-radius: 16px;
+            padding: 12px 16px;
+            margin-bottom: 12px;
+        }
+
+        .typing-indicator-text {
+            color: #c7c7c7;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .typing-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #7d7dff;
+            animation: typing-dots 1.2s infinite ease-in-out;
+            opacity: 0.35;
+        }
+
+        .typing-dot:nth-child(2) {
+            animation-delay: 0.15s;
+        }
+
+        .typing-dot:nth-child(3) {
+            animation-delay: 0.3s;
+        }
+
+        @keyframes typing-dots {
+            0%, 80%, 100% {
+                transform: translateY(0);
+                opacity: 0.35;
+            }
+            40% {
+                transform: translateY(-4px);
+                opacity: 1;
+            }
+        }
+
         .chat-box p {
             margin: 0;
             color: #e2e2e2;
@@ -926,6 +971,15 @@ if "show_login_fields" not in st.session_state:
 if "show_terms" not in st.session_state:
     st.session_state.show_terms = False
 
+if "assistant_is_typing" not in st.session_state:
+    st.session_state.assistant_is_typing = False
+
+if "pending_response" not in st.session_state:
+    st.session_state.pending_response = False
+
+if "pending_user_prompt" not in st.session_state:
+    st.session_state.pending_user_prompt = ""
+
 if "selected_language" not in st.session_state:
     st.session_state.selected_language = "English"
 
@@ -1199,10 +1253,21 @@ OWNER_USERNAME = "Reyaansh Sharma"
 OWNER_PASSWORD = "12345"
 
 def build_prompt(user_input, messages):
+    # Use only the latest user message and the assistant's last answer to speed up prompt processing.
+    last_user = None
+    last_assistant = None
+    for msg in reversed(messages):
+        if last_user is None and msg["role"] == "user":
+            last_user = msg["content"]
+        elif last_assistant is None and msg["role"] == "assistant":
+            last_assistant = msg["content"]
+        if last_user is not None and last_assistant is not None:
+            break
+
     conversation = ""
-    for msg in messages:
-        role = "User" if msg["role"] == "user" else "HEY"
-        conversation += f"{role}: {msg['content']}\n"
+    if last_assistant:
+        conversation += f"HEY: {last_assistant}\n"
+    conversation += f"User: {last_user or user_input}\n"
 
     mode_instruction = get_mode_instruction(st.session_state.mode if "mode" in st.session_state else "default")
     user_context = get_user_context()
@@ -1613,6 +1678,9 @@ def submit_user_message(user_prompt_text: str, attached_image_bytes=None):
         else:
             add_assistant_message("No previous non-harmful question found.")
 
+        st.session_state.pending_response = False
+        st.session_state.pending_user_prompt = ""
+        st.session_state.assistant_is_typing = False
         st.session_state.scroll_to_bottom = True
         st.session_state.clear_message = True
         st.session_state.attached_image_bytes = None
@@ -1623,6 +1691,9 @@ def submit_user_message(user_prompt_text: str, attached_image_bytes=None):
 
     if detect_harmful_content(user_prompt_text):
         add_assistant_message("Sorry, can't help with that.")
+        st.session_state.pending_response = False
+        st.session_state.pending_user_prompt = ""
+        st.session_state.assistant_is_typing = False
         st.session_state.scroll_to_bottom = True
         st.session_state.clear_message = True
         st.session_state.attached_image_bytes = None
@@ -1647,53 +1718,65 @@ def submit_user_message(user_prompt_text: str, attached_image_bytes=None):
         # Keep chat history for signed-in users even when the token economy is disabled.
         persist_user(account)
 
-    prompt = build_prompt(user_prompt_text, active_chats[st.session_state.active_chat]["messages"])
-    try:
-        assistant_response, api_response = generate_answer(
-            prompt,
-            stream=False,
-            attached_image_bytes=attached_image_bytes,
-        )
-        # Ensure we always have a response to display
-        if assistant_response:
-            assistant_text = assistant_response
-        elif api_response:
-            # Try to extract text from API response
-            extracted = extract_response_text(api_response)
-            assistant_text = extracted or "API returned no text, but the request was processed."
-        else:
-            assistant_text = "No response from AI. Please try again."
-        
-        add_assistant_message(assistant_text)
-        if account:
-            persist_user(account)
-        st.session_state.scroll_to_bottom = True
-        st.session_state.clear_message = True
-        st.session_state.attached_image_bytes = None
-        st.session_state.attached_image_name = ""
-        st.session_state.attached_image_type = ""
-        st.session_state.show_attach_uploader = False
+    st.session_state.pending_user_prompt = user_prompt_text
+    st.session_state.pending_response = True
+    st.session_state.assistant_is_typing = True
+    st.session_state.scroll_to_bottom = True
+    return
+
+
+def process_pending_response():
+    if not st.session_state.get("pending_response"):
         return
-    except Exception as e:
-        err_text = str(e)
-        # Add error message to chat so user can see what happened
-        if "Quota exceeded" in err_text or "generate_content_free_tier_requests" in err_text:
-            error_msg = "Quota exceeded: your Gemini API key has no remaining free-tier quota. Enable billing or use a different API key with quota."
-        elif "API key" in err_text or "authentication" in err_text.lower():
-            error_msg = f"API key error: {err_text}. Please check your configuration."
-        else:
-            error_msg = f"Error: {err_text}. Please try again."
-        
-        add_assistant_message(error_msg)
-        if account:
-            persist_user(account)
-        st.session_state.scroll_to_bottom = True
-        st.session_state.clear_message = True
-        st.session_state.attached_image_bytes = None
-        st.session_state.attached_image_name = ""
-        st.session_state.attached_image_type = ""
-        st.session_state.show_attach_uploader = False
+
+    user_prompt_text = st.session_state.get("pending_user_prompt", "")
+    if not user_prompt_text:
+        st.session_state.pending_response = False
+        st.session_state.assistant_is_typing = False
         return
+
+    active_chats = get_active_chats()
+    attached_image_bytes = st.session_state.attached_image_bytes
+
+    with st.spinner("HEY is typing..."):
+        try:
+            prompt = build_prompt(user_prompt_text, active_chats[st.session_state.active_chat]["messages"])
+            assistant_response, api_response = generate_answer(
+                prompt,
+                stream=False,
+                attached_image_bytes=attached_image_bytes,
+            )
+            if assistant_response:
+                assistant_text = assistant_response
+            elif api_response:
+                extracted = extract_response_text(api_response)
+                assistant_text = extracted or "API returned no text, but the request was processed."
+            else:
+                assistant_text = "No response from AI. Please try again."
+        except Exception as e:
+            err_text = str(e)
+            if "Quota exceeded" in err_text or "generate_content_free_tier_requests" in err_text:
+                assistant_text = "Quota exceeded: your Gemini API key has no remaining free-tier quota. Enable billing or use a different API key with quota."
+            elif "API key" in err_text or "authentication" in err_text.lower():
+                assistant_text = f"API key error: {err_text}. Please check your configuration."
+            else:
+                assistant_text = f"Error: {err_text}. Please try again."
+
+    add_assistant_message(assistant_text)
+    if get_current_account():
+        persist_user(get_current_account())
+
+    st.session_state.pending_response = False
+    st.session_state.pending_user_prompt = ""
+    st.session_state.assistant_is_typing = False
+    st.session_state.scroll_to_bottom = True
+    st.session_state.clear_message = True
+    st.session_state.attached_image_bytes = None
+    st.session_state.attached_image_name = ""
+    st.session_state.attached_image_type = ""
+    st.session_state.show_attach_uploader = False
+
+    rerun_app()
 
 
 def can_create_new_chat() -> bool:
@@ -2567,10 +2650,24 @@ with left_col:
                         f"style='max-width:100%; margin-top: 12px; border-radius: 14px;' />"
                     )
                 chat_html += "</div>"
+
+        if st.session_state.assistant_is_typing:
+            chat_html += (
+                "<div class='chat-box assistant typing-indicator'>"
+                "<div class='typing-indicator-text'>HEY is typing</div>"
+                "<div style='display:flex; gap:8px;'>"
+                "<span class='typing-dot'></span>"
+                "<span class='typing-dot'></span>"
+                "<span class='typing-dot'></span>"
+                "</div>"
+                "</div>"
+            )
     else:
         chat_html += "<div style='color: #b5b5b5; font-size: 15px;'>Guest mode active. Chats are temporary and not saved.</div>"
     chat_html += "<div id='scroll-target'></div></div>"
     left_col.markdown(chat_html, unsafe_allow_html=True)
+
+    process_pending_response()
 
     if st.session_state.scroll_to_bottom:
         left_col.markdown(
@@ -2612,6 +2709,9 @@ with left_col:
             placeholder="Write your message here. Press Send when ready.",
             key="user_input",
         )
+
+        if user_input.strip() and not st.session_state.pending_response:
+            st.markdown("<div class='typing-indicator-text' style='margin-bottom:10px;'>HEY is reading your message...</div>", unsafe_allow_html=True)
 
         send_col, mic_col, voice_col, attach_col = st.columns([1.1, 0.8, 1, 1])
         with send_col:
