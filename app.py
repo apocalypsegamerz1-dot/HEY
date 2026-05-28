@@ -63,8 +63,8 @@ def is_supabase_configured():
     if create_client is None:
         return False
 
-    url = _get_supabase_credential("SUPABASE_URL")
-    key = _get_supabase_credential("SUPABASE_KEY")
+    url = _get_supabase_credential("https://otnmgowsrxxtkspryqgj.supabase.co")
+    key = _get_supabase_credential("sb_publishable_rkXbNKJD_uUILcu9Yoj-xw_IiJ713F5")
     return bool(url and key)
 
 
