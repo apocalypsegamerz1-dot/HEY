@@ -63,8 +63,8 @@ def is_supabase_configured():
     if create_client is None:
         return False
 
-    url = _get_supabase_credential("https://otnmgowsrxxtkspryqgj.supabase.co")
-    key = _get_supabase_credential("sb_publishable_rkXbNKJD_uUILcu9Yoj-xw_IiJ713F5")
+    url = _get_supabase_credential("SUPABASE_URL")
+    key = _get_supabase_credential("SUPABASE_KEY")
     return bool(url and key)
 
 
@@ -654,45 +654,6 @@ st.markdown("""
         .message-bubble strong {
             color: #10a37f;
             font-weight: 700;
-        }
-
-        .assistant-heading {
-            font-size: 15px;
-            font-weight: 700;
-            color: #ffffff;
-            margin: 18px 0 8px;
-        }
-
-        .assistant-intro {
-            background: rgba(16, 163, 127, 0.12);
-            border: 1px solid rgba(16, 163, 127, 0.25);
-            border-radius: 14px;
-            padding: 12px 14px;
-            margin-bottom: 12px;
-            color: #e8f8f0;
-            line-height: 1.7;
-        }
-
-        .assistant-intro strong {
-            display: block;
-            margin-bottom: 6px;
-            color: #ffffff;
-        }
-
-        .assistant-section p,
-        .assistant-intro p {
-            margin: 10px 0;
-        }
-
-        .assistant-section ul,
-        .assistant-section ol {
-            margin: 10px 0 16px 18px;
-            padding-left: 0;
-        }
-
-        .assistant-section li {
-            margin-bottom: 8px;
-            line-height: 1.6;
         }
 
         .message-actions {
@@ -1828,72 +1789,20 @@ def escape_html(text):
 # ==============================================================================
 
 def format_response_with_highlights(text: str) -> str:
-    """Format assistant responses into cleaner HTML with simple sections and highlights."""
+    """Format response with important keywords highlighted in bold."""
     if not isinstance(text, str):
         return escape_html(str(text))
-
-    text = text.replace("\r\n", "\n").strip()
-    if not text:
-        return ""
-
-    def escape_line(line: str) -> str:
-        return escape_html(line.strip())
-
-    def render_paragraph(paragraph: str) -> str:
-        lines = [line.strip() for line in paragraph.split("\n") if line.strip()]
-        if not lines:
-            return ""
-
-        if all(re.match(r"^[-*]\s+", line) for line in lines):
-            items = "".join(f"<li>{escape_line(re.sub(r'^[-*]\s+', '', line))}</li>" for line in lines)
-            return f"<div class='assistant-section'><ul>{items}</ul></div>"
-
-        if all(re.match(r"^\d+[\.)]\s+", line) for line in lines):
-            items = "".join(f"<li>{escape_line(re.sub(r'^\d+[\.)]\s+', '', line))}</li>" for line in lines)
-            return f"<div class='assistant-section'><ol>{items}</ol></div>"
-
-        return f"<div class='assistant-section'><p>{'<br>'.join(escape_line(line) for line in lines)}</p></div>"
-
-    section_labels = re.compile(
-        r"^(?P<label>Quick answer|Quick summary|Explanation|Detailed explanation|Examples|Example|Key points|Summary|Steps|Tips|How to|What to do|In short)\s*[:\-–]\s*(?P<rest>.*)$",
-        re.I,
-    )
-
-    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
-    html_parts = []
-
-    for index, paragraph in enumerate(paragraphs):
-        match = section_labels.match(paragraph)
-        if match:
-            label = escape_line(match.group("label")).rstrip(":")
-            body = match.group("rest").strip()
-            html_parts.append(f"<div class='assistant-heading'>{label}</div>")
-            if body:
-                html_parts.append(render_paragraph(body))
-            continue
-
-        if index == 0 and len(paragraphs) > 1 and not section_labels.match(paragraph):
-            rendered = render_paragraph(paragraph)
-            if rendered.startswith("<p>") and rendered.endswith("</p>"):
-                rendered = rendered[3:-4]
-            html_parts.append(
-                "<div class='assistant-intro'><strong>Quick answer</strong><br>"
-                + rendered
-                + "</div>"
-            )
-            continue
-
-        html_parts.append(render_paragraph(paragraph))
-
-    highlighted_html = "".join(html_parts)
-
-    # Highlight some key terms gently for better scanning.
-    keywords = ["important", "note", "warning", "key point", "critical", "summary", "remember", "example"]
+    
+    escaped = escape_html(text)
+    # Highlight keywords like: important, note, warning, key, critical, significant
+    keywords = ["important", "note:", "warning:", "key point:", "critical", "significant", "remember"]
     for keyword in keywords:
-        pattern = re.compile(rf"(?i)\b{re.escape(keyword)}\b")
-        highlighted_html = pattern.sub(lambda m: f"<strong>{escape_line(m.group(0))}</strong>", highlighted_html)
-
-    return highlighted_html
+        pattern = rf"(?i)\b{keyword}\b"
+        escaped = escaped.replace(keyword.lower(), f"<strong>{keyword.lower()}</strong>")
+        escaped = escaped.replace(keyword.upper(), f"<strong>{keyword.upper()}</strong>")
+        escaped = escaped.replace(keyword.capitalize(), f"<strong>{keyword.capitalize()}</strong>")
+    
+    return escaped
 
 
 def get_follow_up_suggestions(response: str) -> list:
@@ -3068,7 +2977,7 @@ with left_col:
         
         if last_assistant_idx is not None and last_assistant_idx == len(active_chat["messages"]) - 1:
             suggestions = get_follow_up_suggestions(active_chat["messages"][last_assistant_idx]["content"])
-            suggestions_html = "<div class='suggestions-container' style='margin-top: 20px;'><div style='color: #a3a3a3; font-size: 12px; margin-bottom: 12px;'>� 💡 Follow-up ideas:</div>"
+            suggestions_html = "<div class='suggestions-container' style='margin-top: 20px;'><div style='color: #a3a3a3; font-size: 12px; margin-bottom: 12px;'>� Follow-up ideas:</div>"
             for suggestion in suggestions:
                 # Remove onclick - users can manually copy/use
                 suggestions_html += f"<button class='suggestion-btn' style='cursor: default;'>{html.escape(suggestion)}</button>"
