@@ -598,191 +598,26 @@ st.markdown("""
             background: rgba(20, 20, 20, 0.95);
             border: 1px solid #2d2d2d;
             border-radius: 18px;
-            padding: 20px;
+            padding: 18px;
             min-height: 600px;
             max-height: 620px;
             overflow-y: auto;
-            scroll-behavior: smooth;
         }
 
         .chat-box {
-            display: flex;
-            align-items: flex-start;
-            margin-bottom: 16px;
-            animation: fadeInUp 0.3s ease-out;
+            background: rgba(14, 14, 14, 0.98);
+            border: 1px solid #2a2a2a;
+            border-radius: 16px;
+            padding: 16px;
+            margin-bottom: 12px;
         }
 
         .chat-box.user {
-            flex-direction: row-reverse;
-            justify-content: flex-end;
+            border-color: #144f3b;
         }
 
         .chat-box.assistant {
-            flex-direction: row;
-            justify-content: flex-start;
-        }
-
-        .message-bubble {
-            max-width: 70%;
-            padding: 14px 18px;
-            border-radius: 14px;
-            border: 1px solid #2a2a2a;
-            word-wrap: break-word;
-            line-height: 1.6;
-        }
-
-        .chat-box.user .message-bubble {
-            background: linear-gradient(135deg, rgba(16, 163, 127, 0.15), rgba(16, 163, 127, 0.08));
-            border-color: #144f3b;
-            color: #e2e2e2;
-            margin-left: 12px;
-        }
-
-        .chat-box.assistant .message-bubble {
-            background: linear-gradient(135deg, rgba(59, 59, 127, 0.15), rgba(59, 59, 127, 0.08));
             border-color: #3b3b7f;
-            color: #e2e2e2;
-            margin-right: 12px;
-        }
-
-        .message-content {
-            margin: 0;
-            white-space: pre-wrap;
-            word-break: break-word;
-        }
-
-        .message-bubble strong {
-            color: #10a37f;
-            font-weight: 700;
-        }
-
-        .message-actions {
-            display: flex;
-            gap: 8px;
-            margin-top: 10px;
-            justify-content: flex-end;
-        }
-
-        .chat-box.user .message-actions {
-            justify-content: flex-end;
-        }
-
-        .chat-box.assistant .message-actions {
-            justify-content: flex-start;
-        }
-
-        .copy-btn, .quick-action-btn {
-            background: rgba(16, 163, 127, 0.2);
-            border: 1px solid rgba(16, 163, 127, 0.4);
-            color: #10a37f;
-            padding: 6px 12px;
-            border-radius: 8px;
-            font-size: 12px;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
-
-        .copy-btn:hover, .quick-action-btn:hover {
-            background: rgba(16, 163, 127, 0.4);
-            border-color: rgba(16, 163, 127, 0.6);
-        }
-
-        .copy-feedback {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            background: #10a37f;
-            color: #ffffff;
-            padding: 12px 16px;
-            border-radius: 8px;
-            animation: slideInDown 0.3s ease-out, slideOutUp 0.3s ease-out 2.7s forwards;
-            z-index: 1000;
-        }
-
-        .suggestions-container {
-            margin-top: 20px;
-            padding: 16px;
-            background: rgba(16, 163, 127, 0.08);
-            border: 1px solid rgba(16, 163, 127, 0.3);
-            border-radius: 14px;
-        }
-
-        .suggestion-btn {
-            display: inline-block;
-            background: rgba(16, 163, 127, 0.15);
-            border: 1px solid rgba(16, 163, 127, 0.3);
-            color: #10a37f;
-            padding: 10px 14px;
-            margin: 6px 6px 0 0;
-            border-radius: 20px;
-            font-size: 13px;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
-
-        .suggestion-btn:hover {
-            background: rgba(16, 163, 127, 0.3);
-            border-color: rgba(16, 163, 127, 0.6);
-        }
-
-        .empty-state {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 240px;
-            text-align: center;
-            padding: 40px;
-            flex-direction: column;
-        }
-
-        .token-warning {
-            background: linear-gradient(135deg, rgba(255, 193, 7, 0.1), rgba(255, 87, 34, 0.1));
-            border-left: 4px solid #ffc107;
-            padding: 12px 16px;
-            margin-bottom: 16px;
-            border-radius: 8px;
-            color: #ffeb3b;
-            font-size: 13px;
-            animation: slideInDown 0.3s ease-out;
-        }
-
-        .token-warning.critical {
-            border-left-color: #ff5252;
-            background: linear-gradient(135deg, rgba(255, 82, 82, 0.1), rgba(255, 82, 82, 0.05));
-            color: #ff6b6b;
-        }
-
-        @keyframes fadeInUp {
-            from {
-                opacity: 0;
-                transform: translateY(10px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        @keyframes slideInDown {
-            from {
-                opacity: 0;
-                transform: translateY(-20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        @keyframes slideOutUp {
-            from {
-                opacity: 1;
-                transform: translateY(0);
-            }
-            to {
-                opacity: 0;
-                transform: translateY(-20px);
-            }
         }
 
         .typing-indicator {
@@ -828,6 +663,13 @@ st.markdown("""
                 transform: translateY(-4px);
                 opacity: 1;
             }
+        }
+
+        .chat-box p {
+            margin: 0;
+            color: #e2e2e2;
+            line-height: 1.6;
+            white-space: pre-wrap;
         }
 
         .right-sidebar-title {
@@ -1172,19 +1014,6 @@ if "dev_test_input" not in st.session_state:
 
 if "dev_code_snippet" not in st.session_state:
     st.session_state.dev_code_snippet = ""
-
-# New UX/UI features
-if "last_response_id" not in st.session_state:
-    st.session_state.last_response_id = None
-
-if "show_copy_feedback" not in st.session_state:
-    st.session_state.show_copy_feedback = False
-
-if "typing_effect_enabled" not in st.session_state:
-    st.session_state.typing_effect_enabled = True
-
-if "last_api_request_id" not in st.session_state:
-    st.session_state.last_api_request_id = None
 
 def get_env_api_key() -> str:
     for env_name in GEMINI_API_KEY_NAMES:
@@ -1784,86 +1613,6 @@ def escape_html(text):
     return html.escape(text).replace("\n", "<br>")
 
 
-# ==============================================================================
-# UX/UI Enhancement Functions
-# ==============================================================================
-
-def format_response_with_highlights(text: str) -> str:
-    """Format response with important keywords highlighted in bold."""
-    if not isinstance(text, str):
-        return escape_html(str(text))
-    
-    escaped = escape_html(text)
-    # Highlight keywords like: important, note, warning, key, critical, significant
-    keywords = ["important", "note:", "warning:", "key point:", "critical", "significant", "remember"]
-    for keyword in keywords:
-        pattern = rf"(?i)\b{keyword}\b"
-        escaped = escaped.replace(keyword.lower(), f"<strong>{keyword.lower()}</strong>")
-        escaped = escaped.replace(keyword.upper(), f"<strong>{keyword.upper()}</strong>")
-        escaped = escaped.replace(keyword.capitalize(), f"<strong>{keyword.capitalize()}</strong>")
-    
-    return escaped
-
-
-def get_follow_up_suggestions(response: str) -> list:
-    """Generate follow-up suggestions based on AI response."""
-    suggestions = [
-        "Explain more",
-        "Give examples",
-        "Simplify this",
-    ]
-    
-    # Add context-specific suggestions based on response length
-    if len(response) > 500:
-        suggestions = ["Summarize this", "Key points", "ELI5"]
-    elif "code" in response.lower():
-        suggestions = ["Show examples", "Explain code", "Optimize this"]
-    elif "how to" in response.lower():
-        suggestions = ["Step-by-step", "Tips", "Common mistakes"]
-    
-    return suggestions[:3]  # Return top 3
-
-
-def get_empty_chat_suggestions() -> list:
-    """Get example prompts for empty chat."""
-    return [
-        "Explain quantum computing in simple terms",
-        "How do I learn Python efficiently?",
-        "What's the best way to start a startup?",
-        "Summarize the latest AI trends",
-        "Give me productivity tips",
-    ]
-
-
-def get_quick_action_buttons() -> dict:
-    """Define quick action buttons for modifying queries."""
-    return {
-        "Explain": "Please explain this in more detail and provide examples.",
-        "Short": "Give me a concise answer in 2-3 sentences.",
-        "Detailed": "Provide a comprehensive, detailed explanation with examples.",
-    }
-
-
-def get_user_token_balance() -> tuple:
-    """Get current user token balance. Returns (balance, is_low, is_critical)."""
-    account = get_current_account()
-    if not account:
-        return (0, False, False)
-    
-    balance = account.get("tokens", 0)
-    max_tokens = st.session_state.token_settings.get("max_tokens", 1000)
-    base_cost = st.session_state.token_settings.get("base_cost", 10)
-    
-    # Consider tokens "low" if less than 3 messages worth
-    low_threshold = base_cost * 3
-    critical_threshold = base_cost
-    
-    is_low = balance <= low_threshold
-    is_critical = balance <= critical_threshold
-    
-    return (balance, is_low, is_critical)
-
-
 def get_active_chats():
     account = get_current_account()
     return account["chats"] if account else st.session_state.guest_chats
@@ -1969,10 +1718,6 @@ def submit_user_message(user_prompt_text: str, attached_image_bytes=None):
         # Keep chat history for signed-in users even when the token economy is disabled.
         persist_user(account)
 
-    # Smart request handling: generate unique request ID to track this request
-    request_id = str(uuid.uuid4())
-    st.session_state.last_api_request_id = request_id
-    
     st.session_state.pending_user_prompt = user_prompt_text
     st.session_state.pending_response = True
     st.session_state.assistant_is_typing = True
@@ -1990,33 +1735,17 @@ def process_pending_response():
         st.session_state.assistant_is_typing = False
         return
 
-    # Smart request handling: check if this is still the latest request
-    current_request_id = st.session_state.get("last_api_request_id")
-    if not current_request_id:
-        st.session_state.pending_response = False
-        st.session_state.assistant_is_typing = False
-        return
-
     active_chats = get_active_chats()
     attached_image_bytes = st.session_state.attached_image_bytes
 
     with st.spinner("HEY is typing..."):
         try:
-            # Check again if this request is still valid before generating
-            if st.session_state.get("last_api_request_id") != current_request_id:
-                return
-            
             prompt = build_prompt(user_prompt_text, active_chats[st.session_state.active_chat]["messages"])
             assistant_response, api_response = generate_answer(
                 prompt,
                 stream=False,
                 attached_image_bytes=attached_image_bytes,
             )
-            
-            # Check one more time if response should be processed
-            if st.session_state.get("last_api_request_id") != current_request_id:
-                return
-            
             if assistant_response:
                 assistant_text = assistant_response
             elif api_response:
@@ -2898,91 +2627,29 @@ with left_col:
         
         st.markdown("---")
 
-    # Display token warning if needed
-    balance, is_low, is_critical = get_user_token_balance()
-    if st.session_state.logged_in and st.session_state.economy_enabled:
-        if is_critical:
-            left_col.markdown(
-                f"<div class='token-warning critical'>⚠️ Critical: Only {balance} tokens left. Consider completing tasks to earn more.</div>",
-                unsafe_allow_html=True
-            )
-        elif is_low:
-            left_col.markdown(
-                f"<div class='token-warning'>⚡ Low tokens: {balance} remaining. Complete tasks to earn more.</div>",
-                unsafe_allow_html=True
-            )
-
     chat_html = "<div id='chat-panel' class='chat-panel'>"
     if active_chats:
         active_chat = active_chats[st.session_state.active_chat]
         if not active_chat["messages"]:
-            # Show empty state with suggestions
-            suggestions_html = "<div class='suggestions-container'><div style='color: #a3a3a3; font-size: 12px; margin-bottom: 12px;'>💡 Try asking:</div>"
-            for i, suggestion in enumerate(get_empty_chat_suggestions()[:5]):
-                suggestions_html += f"<button class='suggestion-btn' style='cursor: default;'>{html.escape(suggestion)}</button>"
-            suggestions_html += "</div>"
-            
             chat_html += (
-                "<div class='empty-state'>"
+                "<div style='display:flex; justify-content:center; align-items:center; "
+                "height:240px; text-align:center; padding:40px;'>"
+                "<div>"
                 "<div style='font-size:42px; font-weight:900; color:#ffffff; margin-bottom:20px;'>HEY-ask and play,every day</div>"
-                "<div style='color:#c7c7c7; font-size:18px; margin-bottom: 30px;'>Start your conversation by typing a message below.</div>"
-                + suggestions_html +
+                "<div style='color:#c7c7c7; font-size:18px;'>Start your conversation by typing a message below.</div>"
+                "</div>"
                 "</div>"
             )
-        
-        for idx, message in enumerate(active_chat["messages"]):
-            role_class = "user" if message["role"] == "user" else "assistant"
-            message_id = f"msg-{idx}"
-            
-            # Format message content with highlights for assistant
-            if message["role"] == "assistant":
-                content_html = format_response_with_highlights(message['content'])
-            else:
-                content_html = escape_html(message['content'])
-            
-            chat_html += f"<div class='chat-box {role_class}' id='{message_id}'>"
-            chat_html += f"<div class='message-bubble'><p class='message-content'>{content_html}</p>"
-            
-            # Add image if present
-            if message.get("type") == "image" and message.get("image_data"):
-                chat_html += (
-                    f"<img src='{message['image_data']}' "
-                    f"style='max-width:100%; margin-top: 12px; border-radius: 14px;' />"
-                )
-            
-            # Add copy button for assistant messages
-            if message["role"] == "assistant":
-                # Escape content for safe data attribute
-                safe_content = message['content'].replace('\\', '\\\\').replace('"', '\\"')
-                chat_html += (
-                    f"<div class='message-actions'>"
-                    f"<button class='copy-btn' data-copy-text='{safe_content}' onclick=\""
-                    f"var text = this.getAttribute('data-copy-text'); "
-                    f"navigator.clipboard.writeText(text).then(function(){{ "
-                    f"var btn = this; btn.textContent = '✓ Copied!'; "
-                    f"setTimeout(function(){{ btn.textContent = '📋 Copy'; }}, 2000); "
-                    f"}}.bind(this)); return false;\">"
-                    f"📋 Copy</button>"
-                    f"</div>"
-                )
-            
-            chat_html += "</div></div>"
-        
-        # Add follow-up suggestions after last assistant message
-        last_assistant_idx = None
-        for idx in range(len(active_chat["messages"]) - 1, -1, -1):
-            if active_chat["messages"][idx]["role"] == "assistant" and not st.session_state.assistant_is_typing:
-                last_assistant_idx = idx
-                break
-        
-        if last_assistant_idx is not None and last_assistant_idx == len(active_chat["messages"]) - 1:
-            suggestions = get_follow_up_suggestions(active_chat["messages"][last_assistant_idx]["content"])
-            suggestions_html = "<div class='suggestions-container' style='margin-top: 20px;'><div style='color: #a3a3a3; font-size: 12px; margin-bottom: 12px;'>� Follow-up ideas:</div>"
-            for suggestion in suggestions:
-                # Remove onclick - users can manually copy/use
-                suggestions_html += f"<button class='suggestion-btn' style='cursor: default;'>{html.escape(suggestion)}</button>"
-            suggestions_html += "</div>"
-            chat_html += suggestions_html
+        for message in active_chat["messages"]:
+                role_class = "user" if message["role"] == "user" else "assistant"
+                chat_html += f"<div class='chat-box {role_class}'>"
+                chat_html += f"<p>{escape_html(message['content'])}</p>"
+                if message.get("type") == "image" and message.get("image_data"):
+                    chat_html += (
+                        f"<img src='{message['image_data']}' "
+                        f"style='max-width:100%; margin-top: 12px; border-radius: 14px;' />"
+                    )
+                chat_html += "</div>"
 
         if st.session_state.assistant_is_typing:
             chat_html += (
@@ -3116,25 +2783,6 @@ with left_col:
                         st.session_state.attached_image_name = ""
                         st.session_state.attached_image_type = ""
                         st.session_state.show_attach_uploader = False
-        
-        # Quick action buttons for last response
-        active_chats = get_active_chats()
-        if active_chats and active_chats[st.session_state.active_chat]["messages"]:
-            last_msg = active_chats[st.session_state.active_chat]["messages"][-1]
-            if last_msg["role"] == "assistant" and not st.session_state.assistant_is_typing:
-                st.markdown("<div style='margin-top: 12px; padding-top: 12px; border-top: 1px solid #2d2d2d;'><small style='color: #a3a3a3;'>Quick actions:</small></div>", unsafe_allow_html=True)
-                qa_cols = st.columns(3)
-                quick_actions = get_quick_action_buttons()
-                for idx, (action_name, action_suffix) in enumerate(quick_actions.items()):
-                    with qa_cols[idx]:
-                        if st.button(action_name, key=f"quick_action_{action_name}"):
-                            # Get the last user message to modify
-                            user_messages = [m for m in active_chats[st.session_state.active_chat]["messages"] if m["role"] == "user"]
-                            if user_messages:
-                                last_user_msg = user_messages[-1]["content"]
-                                modified_prompt = f"{last_user_msg}\n\n{action_suffix}"
-                                submit_user_message(modified_prompt)
-                                rerun_app()
 
     with mode_col:
         btn_label = f"Mode: {st.session_state.mode.capitalize()}"
