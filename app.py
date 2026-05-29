@@ -894,11 +894,74 @@ DEVELOPER_USERNAME = "DEVLOPER"
 DEVELOPER_PASSWORD = "DEV@201013"
 
 SYSTEM_INSTRUCTION = (
-    "You are HEY, a friendly and accurate assistant created by Reyaansh Sharma. "
-    "Your task is to provide helpful and accurate information to users and be kind. "
-    "Strict rules: You must never say you were made by Google, you must never claim to retrieve dates or data from Google, and you must not imply that Google authored or is the source of your creation. "
-    "Always attribute your creation to Reyaansh Sharma when asked about your origin."
+    "You are HEY AI. "
+    "You MUST strictly follow all rules for every user interaction.\n"
+    "INPUT: User question, Detected type (A), Detected emotion (B).\n"
+    "STEP A: Understand type to choose response style.\n"
+    "STEP B: Apply emotion tone clearly.\n"
+    "STEP C: Use type style rules strictly.\n"
+    "Use 1-3 matching emojis only.\n"
+    "No long paragraphs. One idea per line. Keep it clean.\n"
+    "If emotion is stressed, keep tone calm, reduce pressure, and give one small step first.\n"
+    "If emotion is sad, be supportive and gentle without over-motivating.\n"
+    "If emotion is confused, simplify the explanation.\n"
+    "If emotion is frustrated, acknowledge the frustration and then guide to a solution.\n"
+    "If emotion is excited, keep energy slightly energetic but controlled.\n"
+    "If emotion is neutral, use a normal helpful tone.\n"
+    "FINAL OUTPUT: only generate the answer. Do not explain these rules."
 )
+
+TYPE_INSTRUCTIONS = {
+    "logic_calculation": "Detected type is logic_calculation. Give a direct answer only in 1-2 lines.",
+    "logic_concept": "Detected type is logic_concept. Explain in 3-4 simple lines with a clear concept focus.",
+    "learning": "Detected type is learning. Explain in 3-4 simple lines for learning.",
+    "simple_fact": "Detected type is simple_fact. Answer in exactly 3 lines, clear and simple.",
+    "real_life_decision": "Detected type is real_life_decision. Use a practical answer with bullets in 4-6 lines.",
+    "real_life_problem": "Detected type is real_life_problem. Use a practical answer with bullets in 4-6 lines.",
+}
+
+EMOTION_INSTRUCTIONS = {
+    "stressed": "User is stressed. Keep tone calm, reduce pressure, and give one small step first.",
+    "sad": "User is sad. Be supportive and gentle without over-motivating.",
+    "confused": "User is confused. Simplify the explanation and make it easy to follow.",
+    "frustrated": "User is frustrated. Acknowledge the frustration calmly, then redirect to a practical fix.",
+    "excited": "User is excited. Match energy slightly while keeping tone focused and controlled.",
+    "neutral": "User is neutral. Use a normal helpful tone.",
+}
+
+
+def detect_intent(user_input: str) -> str:
+    normalized = user_input.strip().lower()
+    if not normalized:
+        return "simple_fact"
+    if any(token in normalized for token in ["calculate", "what is", "how much", "how many", "sum", "difference", "multiply", "divide", "plus", "minus", "times", "=", "%", "percent", "total", "average"]):
+        return "logic_calculation"
+    if any(token in normalized for token in ["what is", "explain", "define", "meaning of", "how does", "why"]):
+        return "logic_concept"
+    if any(token in normalized for token in ["teach me", "learn", "learning", "study", "help me understand", "help me learn"]):
+        return "learning"
+    if any(token in normalized for token in ["should", "recommend", "advice", "best way", "what should i", "how can i", "choose", "decision", "option"]):
+        return "real_life_decision"
+    if any(token in normalized for token in ["problem", "issue", "error", "bug", "stuck", "fix", "trouble", "unable", "can't", "cannot"]):
+        return "real_life_problem"
+    if any(token in normalized for token in ["who", "when", "where", "which", "is it", "are", "did", "do", "does", "can"]):
+        return "simple_fact"
+    return "simple_fact"
+
+
+def detect_emotion(user_input: str) -> str:
+    text = user_input.strip().lower()
+    if any(token in text for token in ["confused", "don\'t understand", "dont understand", "still not", "lost", "repeat", "again"]):
+        return "confused"
+    if any(token in text for token in ["stressed", "stress", "urgent", "pressure", "deadline", "asap", "overwhelmed", "overwhelming"]):
+        return "stressed"
+    if any(token in text for token in ["sad", "depressed", "down", "miserable", "unhappy", "feel bad", "feeling bad", "low mood"]):
+        return "sad"
+    if any(token in text for token in ["frustrated", "angry", "annoyed", "irritated", "rage", "hate this", "so annoying", "damn", "dammit"]):
+        return "frustrated"
+    if any(token in text for token in ["excited", "thrilled", "awesome", "love this", "great", "really good", "pumped", "can\'t wait", "cant wait"]):
+        return "excited"
+    return "neutral"
 
 DEVELOPER_ASSISTANT_SUMMARY = (
     "App name: HEY\n"
@@ -1252,7 +1315,7 @@ OWNER_ACCOUNT_ID = "owner_account"
 OWNER_USERNAME = "Reyaansh Sharma"
 OWNER_PASSWORD = "12345"
 
-def build_prompt(user_input, messages):
+def build_prompt(user_input, messages, user_type="simple_fact", emotion="neutral"):
     # Use only the latest user message and the assistant's last answer to speed up prompt processing.
     last_user = None
     last_assistant = None
@@ -1272,6 +1335,9 @@ def build_prompt(user_input, messages):
     mode_instruction = get_mode_instruction(st.session_state.mode if "mode" in st.session_state else "default")
     user_context = get_user_context()
 
+    type_note = TYPE_INSTRUCTIONS.get(user_type, "Detected type is simple_fact. Answer in exactly 3 lines.")
+    emotion_note = EMOTION_INSTRUCTIONS.get(emotion, EMOTION_INSTRUCTIONS["neutral"])
+
     if st.session_state.user_role == "developer" and st.session_state.dev_system_prompt:
         header = (
             DEVELOPER_ASSISTANT_SUMMARY
@@ -1281,6 +1347,7 @@ def build_prompt(user_input, messages):
     else:
         header = SYSTEM_INSTRUCTION
     
+    header = header + "\n\n" + type_note + "\n" + emotion_note
     if mode_instruction:
         header = header + "\n\nMode instruction: " + mode_instruction
     if user_context:
@@ -1739,8 +1806,12 @@ def process_pending_response():
     attached_image_bytes = st.session_state.attached_image_bytes
 
     with st.spinner("HEY is typing..."):
+        detected_type = detect_intent(user_prompt_text)
+        emotion = detect_emotion(user_prompt_text)
+        print("Detected type:", detected_type)
+        print("Detected emotion:", emotion)
         try:
-            prompt = build_prompt(user_prompt_text, active_chats[st.session_state.active_chat]["messages"])
+            prompt = build_prompt(user_prompt_text, active_chats[st.session_state.active_chat]["messages"], user_type=detected_type, emotion=emotion)
             assistant_response, api_response = generate_answer(
                 prompt,
                 stream=False,
