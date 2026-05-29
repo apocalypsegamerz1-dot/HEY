@@ -1,0 +1,5 @@
+Two plus two equals 4. This is basic arithmetic used for addition examples. Use it to sum small integers.
+
+Explain linear relationship between x and y. y = mx + b. Slope is m. Intercept is b.
+
+Decide between A and B. Consider pros and cons. Example: if budget low choose A. If speed matters choose B. Also evaluate risk and timeline.

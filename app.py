@@ -1005,7 +1005,7 @@ def _ensure_lines(lines: list, min_lines: int) -> list:
 
 
 def format_response(response: str, style: str) -> str:
-    # HEY strict structured formatter
+    # HEY strict formatter following user's exact structure and non-repetition rules
     if not isinstance(response, str):
         return response
 
@@ -1015,115 +1015,174 @@ def format_response(response: str, style: str) -> str:
         sentences.extend(_split_sentences(part))
     sentences = [s.strip() for s in sentences if s.strip()]
 
-    # 1) TITLE / MAIN IDEA
-    title = sentences[0] if sentences else "Answer"
-    if len(title) > 140:
-        title = title[:137].rsplit(" ", 1)[0] + "..."
+    used = set()
 
-    # 2) EXPLANATION (2-3 lines)
-    explanation = sentences[1:4]
-    if len(explanation) < 2 and len(sentences) > 1:
-        parts = re.split(r",\s+|;\s+| -\s+", sentences[1]) if len(sentences) > 1 else []
-        explanation = parts[:2]
-    explanation = explanation[:3]
+    # 1) MAIN IDEA (1-2 lines)
+    main_idea = sentences[0] if sentences else ""
+    if main_idea:
+        used.add(main_idea)
+    # allow second line if it adds content and is different
+    main_idea_lines = [main_idea]
+    if len(sentences) > 1 and len(main_idea.split()) < 12:
+        candidate = sentences[1]
+        if candidate not in used:
+            main_idea_lines.append(candidate)
+            used.add(candidate)
 
-    # Remaining sentences for key points / other sections
-    used_count = 1 + len(explanation)
-    remaining = sentences[used_count:]
+    # truncate lines to reasonable length
+    def _truncate(line, n=140):
+        if len(line) <= n:
+            return line
+        return line[: n - 3].rsplit(" ", 1)[0] + "..."
 
-    # 3) KEY POINTS SECTION (select up to 5 key points)
+    main_idea_lines = [_truncate(l, 140) for l in main_idea_lines if l]
+
+    # 2) EXPLANATION (2-4 lines) - pick next distinct sentences
+    explanation_lines = []
+    idx = 1
+    while len(explanation_lines) < 4 and idx < len(sentences):
+        s = sentences[idx]
+        idx += 1
+        if s in used:
+            continue
+        explanation_lines.append(s)
+        used.add(s)
+    # if less than 2 lines, try splitting the next available sentence
+    if len(explanation_lines) < 2 and idx < len(sentences):
+        parts = re.split(r",\s+|;\s+| -\s+", sentences[idx])
+        for p in parts:
+            p = p.strip()
+            if p and p not in used:
+                explanation_lines.append(p)
+                used.add(p)
+            if len(explanation_lines) >= 2:
+                break
+
+    # 3) KEY POINTS SECTION
     key_points = []
-    if remaining:
-        for s in remaining:
-            if len(key_points) >= 5:
-                break
-            if s and s not in key_points and s not in explanation and s != title:
-                key_points.append(s)
-    if not key_points:
-        for s in explanation:
-            if len(key_points) >= 3:
-                break
-            key_points.append(s)
+    for s in sentences[idx:]:
+        if len(key_points) >= 5:
+            break
+        if s in used:
+            continue
+        # short point: first clause up to comma or 12 words
+        point = s.split(",")[0]
+        words = point.split()
+        short_point = " ".join(words[:12])
+        if not short_point:
+            continue
+        if short_point in (kp[0] for kp in key_points):
+            continue
+        # create a distinct explanation line (rephrase): use 'In other words,' + short expansion
+        explanation_variant = "In other words, " + (" ".join(words[:14]) + ("..." if len(words) > 14 else ""))
+        # ensure explanation is not identical to point or any prior lines
+        if explanation_variant == short_point or explanation_variant in used:
+            explanation_variant = explanation_variant + " (clarified)"
+        key_points.append((short_point, explanation_variant))
+        used.add(s)
+        used.add(short_point)
+        used.add(explanation_variant)
 
-    bullets_with_meaning = []
-    for bp in key_points:
-        words = bp.split()
-        short = " ".join(words[:18]) + ("..." if len(words) > 18 else "")
-        meaning = f"→ This means {short}"
-        bullets_with_meaning.append((bp, meaning))
+    # 4) FORMULA SECTION (if present)
+    formula = None
+    formula_explanation = None
+    # simple formula regex: var = expression (avoid matching plain sentences)
+    fm = re.search(r"\b([a-zA-Z][a-zA-Z0-9_]*)\s*=\s*([^,;\n]+)", text)
+    if fm:
+        candidate = fm.group(0).strip()
+        # avoid accidental matches that repeat earlier lines
+        if candidate not in used:
+            formula = candidate
+            formula_explanation = "→ This means: " + "An overall relationship expressed by the formula; it summarizes how the left-hand variable depends on the right-hand expression."
+            used.add(formula)
+            used.add(formula_explanation)
 
-    # 4) FORMULA / CORE LOGIC (if applicable)
-    formula_section = []
-    formula_match = re.search(r"([A-Za-z0-9_\)\(\s\+\-\*\/=\.\^%]+=[A-Za-z0-9_\)\(\s\+\-\*\/=\.\^%]+)", text)
-    if formula_match:
-        formula = formula_match.group(1).strip()
-        formula_section.append(formula)
-        parts = re.split(r"(\+|\-|\*|/|=|\^|%)", formula)
-        for part in parts:
-            p = part.strip()
-            if not p:
-                continue
-            if p in "+-*/=^%":
-                meaning = f"{p} — This is the operator '{p}' used in the formula."
-            else:
-                meaning = f"{p} — This represents '{p}' in the formula."
-            formula_section.append(meaning)
-
-    # 5) BEHAVIOR / CASES (if applicable)
+    # 5) BEHAVIOR / CASES (if any)
     cases = []
-    for s in remaining:
-        lowered = s.lower()
-        if any(term in lowered for term in ["example", "when", "if", "case", "positive", "negative", "instead", "otherwise"]):
-            words = s.split()
-            short = " ".join(words[:28]) + ("..." if len(words) > 28 else "")
-            cases.append((s, f"→ This means {short}"))
+    case_keywords = ["example", "if ", "when ", "in case", "otherwise", "instead", "case ", "scenario"]
+    for s in sentences:
+        low = s.lower()
+        if any(k in low for k in case_keywords) and s not in used:
+            # create concise case and a unique meaning line
+            case_short = s.split(".")[0]
+            meaning = "→ Meaning: " + (" ".join(case_short.split()[:20]) + ("..." if len(case_short.split()) > 20 else ""))
+            if meaning in used or case_short in used:
+                meaning = meaning + " (note)"
+            cases.append((case_short, meaning))
+            used.add(case_short)
+            used.add(meaning)
         if len(cases) >= 4:
             break
 
-    # 6) FINAL SUMMARY (1-2 lines)
-    final_summary = title if title else (sentences[0] if sentences else "Summary")
-    final_summary_short = final_summary if len(final_summary.split()) <= 20 else " ".join(final_summary.split()[:20]) + "..."
-
-    # Assemble the mandated structure with clear spacing
-    output = []
-    output.append(title)
-    output.append("")
-    if explanation:
-        for ex in explanation[:3]:
-            output.append(ex)
+    # 6) FINAL SUMMARY (1-2 lines, fresh wording)
+    # produce a concise fresh wording by using synonyms connector
+    final = None
+    if main_idea_lines:
+        core = " ".join(main_idea_lines)[:200]
+        final = "Bottom line: " + core
+        if final in used:
+            final = "Bottom line: Focus on the central idea." if "Focus on" not in used else "Bottom line: Key takeaway provided."
     else:
-        output.append("No further explanation available.")
-    output.append("")
-    output.append("Key points:")
-    for bp, meaning in bullets_with_meaning:
-        output.append(f"- {bp}")
-        output.append(meaning)
-    output.append("")
-    if formula_section:
-        output.append("Formula / Core logic:")
-        for line in formula_section:
-            output.append(line)
-        output.append("")
+        final = "Bottom line: Key takeaway provided."
+
+    # Build output sections with strict ordering and spacing
+    out = []
+    # MAIN IDEA
+    out.append("MAIN IDEA")
+    for l in main_idea_lines[:2]:
+        out.append(l)
+    out.append("")
+    # EXPLANATION
+    out.append("EXPLANATION")
+    if explanation_lines:
+        for l in explanation_lines[:4]:
+            out.append(l)
+    else:
+        out.append("No further explanation available.")
+    out.append("")
+    # KEY POINTS
+    if key_points:
+        out.append("KEY POINTS")
+        for p, m in key_points:
+            out.append(f"- {p}")
+            out.append(f"→ This means: {m[len('In other words, '):] if m.startswith('In other words, ') else m}")
+        out.append("")
+
+    # FORMULA
+    if formula:
+        out.append("FORMULA")
+        out.append(formula)
+        out.append(formula_explanation)
+        out.append("")
+
+    # CASES
     if cases:
-        output.append("Behavior / Cases:")
-        for case, meaning in cases:
-            output.append(f"- {case}")
-            output.append(meaning)
-        output.append("")
-    output.append("Final summary:")
-    output.append(final_summary_short)
+        out.append("BEHAVIOR / CASES")
+        for c, m in cases:
+            out.append(f"- {c}")
+            out.append(m)
+        out.append("")
 
-    # Ensure no emojis (user requested none unless explicitly asked)
-    cleaned = [re.sub(r"[\U0001F300-\U0001F6FF\U0001F900-\U0001F9FF\U0001F1E0-\U0001F1FF]", "", ln).strip() for ln in output]
-    compact = []
-    last = None
-    for ln in cleaned:
-        if ln == last and ln == "":
+    # FINAL SUMMARY
+    out.append("FINAL SUMMARY")
+    out.append(final)
+
+    # Clean: remove exact duplicate lines and empty runs
+    cleaned = []
+    seen = set()
+    for ln in out:
+        ln = ln.strip()
+        if not ln:
+            # preserve single blank as section separator but avoid multiples
+            if cleaned and cleaned[-1] != "":
+                cleaned.append("")
             continue
-        compact.append(ln)
-        last = ln
+        if ln in seen:
+            continue
+        cleaned.append(ln)
+        seen.add(ln)
 
-    return "\n\n".join(compact).strip()
+    return "\n\n".join(cleaned).strip()
 
 
 def detect_intent(user_input: str) -> str:
