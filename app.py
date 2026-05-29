@@ -945,6 +945,97 @@ def get_style(user_type: str, user_input: str) -> str:
     return "short"
 
 
+def classify_input_mode(user_input: str) -> str:
+    normalized = user_input.strip().lower()
+    if not normalized:
+        return "normal"
+
+    greetings = [
+        "hello",
+        "hi",
+        "hey",
+        "hey there",
+        "good morning",
+        "good afternoon",
+        "good evening",
+        "nice to meet you",
+        "good to see you",
+    ]
+    for token in greetings:
+        if normalized == token or normalized.startswith(token + " ") or normalized.startswith(token + ","):
+            return "normal"
+
+    casual_phrases = [
+        "how are you",
+        "what's up",
+        "whats up",
+        "how is it going",
+        "how are things",
+        "thanks",
+        "thank you",
+        "thank u",
+        "cool",
+        "nice",
+        "bye",
+        "goodbye",
+        "see you",
+        "later",
+        "no problem",
+        "got it",
+        "sure",
+        "okay",
+        "ok",
+        "sorry",
+    ]
+    if any(phrase in normalized for phrase in casual_phrases):
+        if len(normalized.split()) <= 12:
+            return "normal"
+
+    learning_triggers = [
+        "explain",
+        "define",
+        "definition",
+        "meaning of",
+        "how does",
+        "why",
+        "teach me",
+        "learn",
+        "study",
+        "help me understand",
+        "help me learn",
+        "advice",
+        "recommend",
+        "should i",
+        "what should i",
+        "choose",
+        "decision",
+        "option",
+        "compare",
+        "pros and cons",
+        "problem",
+        "issue",
+        "error",
+        "bug",
+        "solve",
+        "calculate",
+        "math",
+        "equation",
+        "formula",
+        "example",
+        "proof",
+        "derive",
+        "steps",
+    ]
+    if any(trigger in normalized for trigger in learning_triggers):
+        return "formatted"
+
+    math_symbols = ["+", "-", "*", "/", "=", "%", "percent"]
+    if any(symbol in normalized for symbol in math_symbols) and len(normalized.split()) <= 20:
+        return "formatted"
+
+    return "normal"
+
+
 def _split_sentences(text: str) -> list:
     text = text.strip()
     if not text:
@@ -1753,7 +1844,7 @@ OWNER_ACCOUNT_ID = "owner_account"
 OWNER_USERNAME = "Reyaansh Sharma"
 OWNER_PASSWORD = "12345"
 
-def build_prompt(user_input, messages, user_type="simple_fact", emotion="neutral", style="short"):
+def build_prompt(user_input, messages, user_type="simple_fact", emotion="neutral", style="short", response_mode="formatted"):
     # Use only the latest user message and the assistant's last answer to speed up prompt processing.
     last_user = None
     last_assistant = None
@@ -1773,9 +1864,14 @@ def build_prompt(user_input, messages, user_type="simple_fact", emotion="neutral
     mode_instruction = get_mode_instruction(st.session_state.mode if "mode" in st.session_state else "default")
     user_context = get_user_context()
 
-    type_note = TYPE_INSTRUCTIONS.get(user_type, "Detected type is simple_fact. Answer in exactly 3 lines.")
-    emotion_note = EMOTION_INSTRUCTIONS.get(emotion, EMOTION_INSTRUCTIONS["neutral"])
-    style_note = STYLE_INSTRUCTIONS.get(style, "")
+    if response_mode == "formatted":
+        type_note = TYPE_INSTRUCTIONS.get(user_type, "Detected type is simple_fact. Answer in exactly 3 lines.")
+        emotion_note = EMOTION_INSTRUCTIONS.get(emotion, EMOTION_INSTRUCTIONS["neutral"])
+        style_note = STYLE_INSTRUCTIONS.get(style, "")
+    else:
+        type_note = ""
+        emotion_note = EMOTION_INSTRUCTIONS.get(emotion, EMOTION_INSTRUCTIONS["neutral"])
+        style_note = ""
 
     if st.session_state.user_role == "developer" and st.session_state.dev_system_prompt:
         header = (
@@ -1784,25 +1880,44 @@ def build_prompt(user_input, messages, user_type="simple_fact", emotion="neutral
             + st.session_state.dev_system_prompt
         )
     else:
-        header = SYSTEM_INSTRUCTION
-    
-    header = header + "\n\n" + type_note + "\n" + emotion_note
-    if style_note:
-        header = header + "\n" + style_note
-    header = header + (
-        "\n\nResponse guidance: Answer as a clean teaching note with these exact sections:\n"
-        "MAIN IDEA, EXPLANATION, KEY POINTS, FORMULA if applicable, BEHAVIOR / CASES if applicable, "
-        "FINAL SUMMARY, and RELATED DOUBTS.\n"
-        "Do not repeat any sentence or meaning. Do not paraphrase the user input.\n"
-        "MAIN IDEA: 2-3 lines that define the core concept in simple language.\n"
-        "EXPLANATION: 3-6 lines with new insight on each line.\n"
-        "KEY POINTS: each point is a factual statement, and each meaning adds new understanding.\n"
-        "FORMULA: include only if a precise formula is relevant, and explain the formula as one whole concept.\n"
-        "BEHAVIOR / CASES: include only when distinct situations matter.\n"
-        "FINAL SUMMARY: 1-2 lines with fresh wording that does not repeat earlier lines.\n"
-        "RELATED DOUBTS: 2-3 clear questions directly related to the topic.\n"
-        "No emojis. No generic encouragement. No extra sections."
-    )
+        if response_mode == "formatted":
+            header = SYSTEM_INSTRUCTION
+        else:
+            header = (
+                "You are a helpful AI assistant. Answer user messages naturally, briefly, and conversationally. "
+                "Do not use structured teaching sections or fixed headings unless the user explicitly asks for an explanation."
+            )
+
+    if type_note or emotion_note or style_note:
+        header = header + "\n\n"
+        if type_note:
+            header = header + type_note + "\n"
+        if emotion_note:
+            header = header + emotion_note
+        if style_note:
+            header = header + "\n" + style_note
+
+    if response_mode == "formatted":
+        header = header + (
+            "\n\nResponse guidance: Answer as a clean teaching note with these exact sections:\n"
+            "MAIN IDEA, EXPLANATION, KEY POINTS, FORMULA if applicable, BEHAVIOR / CASES if applicable, "
+            "FINAL SUMMARY, and RELATED DOUBTS.\n"
+            "Do not repeat any sentence or meaning. Do not paraphrase the user input.\n"
+            "MAIN IDEA: 2-3 lines that define the core concept in simple language.\n"
+            "EXPLANATION: 3-6 lines with new insight on each line.\n"
+            "KEY POINTS: each point is a factual statement, and each meaning adds new understanding.\n"
+            "FORMULA: include only if a precise formula is relevant, and explain the formula as one whole concept.\n"
+            "BEHAVIOR / CASES: include only when distinct situations matter.\n"
+            "FINAL SUMMARY: 1-2 lines with fresh wording that does not repeat earlier lines.\n"
+            "RELATED DOUBTS: 2-3 clear questions directly related to the topic.\n"
+            "No emojis. No generic encouragement. No extra sections."
+        )
+    else:
+        header = header + (
+            "\n\nResponse guidance: Answer naturally and briefly. Use a friendly, human tone. Keep the reply short and conversational. "
+            "Do not use MAIN IDEA, EXPLANATION, KEY POINTS, FORMULA, BEHAVIOR / CASES, FINAL SUMMARY, or RELATED DOUBTS. "
+            "Do not force structured sections. Avoid bullet points unless they are clearly necessary."
+        )
     if mode_instruction:
         header = header + "\n\nMode instruction: " + mode_instruction
     if user_context:
@@ -2263,13 +2378,16 @@ def process_pending_response():
     with st.spinner("HEY is typing..."):
         detected_type = detect_intent(user_prompt_text)
         emotion = detect_emotion(user_prompt_text)
+        input_mode = classify_input_mode(user_prompt_text)
         # store for formatter/other components (does not change content)
         st.session_state.detected_type = detected_type
         st.session_state.detected_emotion = emotion
+        st.session_state.response_mode = input_mode
         style = get_style(detected_type, user_prompt_text)
         print("Detected type:", detected_type)
         print("Detected emotion:", emotion)
         print("Detected style:", style)
+        print("Detected response mode:", input_mode)
         try:
             prompt = build_prompt(
                 user_prompt_text,
@@ -2277,6 +2395,7 @@ def process_pending_response():
                 user_type=detected_type,
                 emotion=emotion,
                 style=style,
+                response_mode=input_mode,
             )
             assistant_response, api_response = generate_answer(
                 prompt,
@@ -2290,7 +2409,8 @@ def process_pending_response():
                 assistant_text = extracted or "API returned no text, but the request was processed."
             else:
                 assistant_text = "No response from AI. Please try again."
-            assistant_text = format_response(assistant_text, style)
+            if input_mode == "formatted":
+                assistant_text = format_response(assistant_text, style)
         except Exception as e:
             err_text = str(e)
             if "Quota exceeded" in err_text or "generate_content_free_tier_requests" in err_text:
