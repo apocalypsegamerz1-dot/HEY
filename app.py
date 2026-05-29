@@ -900,7 +900,7 @@ SYSTEM_INSTRUCTION = (
     "STEP A: Understand type to choose response style.\n"
     "STEP B: Apply emotion tone clearly.\n"
     "STEP C: Use type style rules strictly.\n"
-    "Use 1-3 matching emojis only.\n"
+    "Use atlesst 5-9 matching emojis only.\n"
     "No long paragraphs. One idea per line. Keep it clean.\n"
     "If emotion is stressed, keep tone calm, reduce pressure, and give one small step first.\n"
     "If emotion is sad, be supportive and gentle without over-motivating.\n"
@@ -1005,62 +1005,120 @@ def _ensure_lines(lines: list, min_lines: int) -> list:
 
 
 def format_response(response: str, style: str) -> str:
+    # HEY rewrite engine: strict formatting after generation
     if not isinstance(response, str):
         return response
+
     text = _normalize_text(response)
-    lines = [line.strip() for line in text.split("\n") if line.strip()]
-    if not lines:
-        return text
+    sentences = []
+    for part in text.split("\n"):
+        sentences.extend(_split_sentences(part))
+    sentences = [s.strip() for s in sentences if s.strip()]
 
+    # helper to take N sentences safely
+    def take_n(n):
+        return sentences[:n] if sentences else [text]
+
+    # emotion -> emoji map (used sparingly)
+    EMOJI_MAP = {
+        "confused": "🤔",
+        "stressed": "🧠",
+        "sad": "🤝",
+        "frustrated": "😤",
+        "excited": "🚀",
+        "neutral": ""
+    }
+
+    # Hook: strong first line (use first sentence truncated)
+    hook = sentences[0] if sentences else text
+    if len(hook) > 120:
+        hook = hook[:117].rsplit(" ", 1)[0] + "..."
+
+    body = []
     if style == "direct":
-        if len(lines) > 2:
-            return "\n".join(lines[:2])
-        if len(lines) == 1:
-            sentences = _split_sentences(lines[0])
-            return "\n".join(sentences[:2])
-        return "\n".join(lines)
+        chosen = take_n(2)
+        body = [s for s in chosen]
+        target_min, target_max = 1, 2
 
-    if style == "short":
-        if len(lines) >= 3:
-            return "\n".join(lines[:3])
-        lines = _ensure_lines(lines, 3)
-        return "\n".join(lines[:3])
+    elif style == "short":
+        chosen = take_n(5)
+        body = [s for s in chosen[:5]]
+        target_min, target_max = 3, 5
 
-    if style == "medium":
-        if len(lines) >= 3:
-            return "\n".join(lines[:4])
-        lines = _ensure_lines(lines, 3)
-        return "\n".join(lines[:4])
+    elif style == "medium":
+        chosen = take_n(15)
+        body = [s for s in chosen[:15]]
+        target_min, target_max = 8, 15
 
-    if style == "detailed":
-        if len(lines) < 6:
-            sentences = []
-            for line in lines:
-                sentences.extend(_split_sentences(line))
-            lines = sentences
-        lines = _ensure_lines(lines, 6)
-        lines = lines[:8]
-        return "\n\n".join(lines)
+    elif style in ("detailed", "long"):
+        # For long/detailed, prefer bulletized steps
+        chosen = take_n(25)
+        bullets = [f"🔹 {s}" for s in chosen[:25]]
+        # If too few bullets, split longer sentences
+        if len(bullets) < 6 and sentences:
+            more = []
+            for s in sentences:
+                if len(more) >= 25:
+                    break
+                parts = re.split(r",\s+|;\s+| -\s+", s)
+                more.extend([p.strip() for p in parts if p.strip()])
+            bullets = [f"🔹 {s}" for s in more[:25]]
+        body = bullets
+        target_min, target_max = 15, 25
 
-    if style == "long":
-        bullets = []
-        for line in lines:
-            if len(bullets) >= 6:
-                break
-            sentence_parts = _split_sentences(line)
-            if sentence_parts:
-                for part in sentence_parts:
-                    if len(bullets) >= 6:
-                        break
-                    bullets.append(part)
-            else:
-                bullets.append(line)
-        bullets = bullets[:6]
-        bullets = _ensure_lines(bullets, 4)
-        bullets = [f"🔹 {line}" if not line.startswith("🔹") else line for line in bullets]
-        return "\n".join(bullets)
+    else:
+        body = take_n(8)
+        target_min, target_max = 8, 15
 
-    return text
+    # Ensure body has at least target_min lines (expand if needed)
+    if len(body) < target_min:
+        extra = sentences[len(body):len(body) + (target_min - len(body))]
+        if style in ("detailed", "long"):
+            body.extend([f"🔹 {s}" for s in extra])
+        else:
+            body.extend(extra)
+
+    # Build ending: 2-3 lines (conclusion, takeaway, optional insight)
+    conclusion = ""
+    takeaway = ""
+    insight = ""
+    if len(sentences) >= 2:
+        conclusion = sentences[min(1, len(sentences)-1)]
+    else:
+        conclusion = hook
+    takeaway = f"Takeaway: {sentences[-1]}" if sentences else "Takeaway: Keep this concise."
+    # optional insight: short, non-factual, safe
+    insight = "Quick tip: Focus on the next small step." if style in ("long", "detailed") else ""
+
+    # Assemble final lines respecting one-idea-per-line
+    emoji = EMOJI_MAP.get(st.session_state.get("detected_emotion", "neutral"), "")
+    final_lines = []
+    if emoji:
+        final_lines.append(f"{emoji} {hook}")
+    else:
+        final_lines.append(hook)
+
+    # add spacing between hook and body
+    for i, line in enumerate(body):
+        # ensure bullets remain as single lines
+        final_lines.append(line)
+
+    # spacing before ending
+    final_lines.append("")
+    final_lines.append(conclusion)
+    final_lines.append(takeaway)
+    if insight:
+        final_lines.append(insight)
+
+    # Clean up and ensure no dense paragraphs: one idea per line
+    cleaned = [ln.strip() for ln in final_lines if ln is not None]
+    # Remove duplicate adjacent lines
+    compact = [cleaned[0]] if cleaned else []
+    for ln in cleaned[1:]:
+        if ln and ln != compact[-1]:
+            compact.append(ln)
+
+    return "\n\n".join(compact)
 
 
 def detect_intent(user_input: str) -> str:
@@ -1944,6 +2002,9 @@ def process_pending_response():
     with st.spinner("HEY is typing..."):
         detected_type = detect_intent(user_prompt_text)
         emotion = detect_emotion(user_prompt_text)
+        # store for formatter/other components (does not change content)
+        st.session_state.detected_type = detected_type
+        st.session_state.detected_emotion = emotion
         style = get_style(detected_type, user_prompt_text)
         print("Detected type:", detected_type)
         print("Detected emotion:", emotion)
