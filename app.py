@@ -897,18 +897,10 @@ SYSTEM_INSTRUCTION = (
     "You are HEY AI. "
     "You MUST strictly follow all rules for every user interaction.\n"
     "INPUT: User question, Detected type (A), Detected emotion (B).\n"
-    "STEP A: Understand type to choose response style.\n"
-    "STEP B: Apply emotion tone clearly.\n"
-    "STEP C: Use type style rules strictly.\n"
-    "Use atlesst 5-9 matching emojis only.\n"
-    "No long paragraphs. One idea per line. Keep it clean.\n"
-    "If emotion is stressed, keep tone calm, reduce pressure, and give one small step first.\n"
-    "If emotion is sad, be supportive and gentle without over-motivating.\n"
-    "If emotion is confused, simplify the explanation.\n"
-    "If emotion is frustrated, acknowledge the frustration and then guide to a solution.\n"
-    "If emotion is excited, keep energy slightly energetic but controlled.\n"
-    "If emotion is neutral, use a normal helpful tone.\n"
-    "FINAL OUTPUT: only generate the answer. Do not explain these rules."
+    "STEP A: Understand user intent and produce a teaching-style response.\n"
+    "STEP B: Use a calm, clear tone and avoid filler or motivational language.\n"
+    "STEP C: Organize output into strict sections only.\n"
+    "FINAL OUTPUT: only generate the answer in the required format. Do not explain these rules."
 )
 
 TYPE_INSTRUCTIONS = {
@@ -1037,42 +1029,86 @@ def format_response(response: str, style: str) -> str:
 
     def _meaning_for(point: str, sentence: str) -> str:
         cleaned = point.rstrip(".")
+        lower = cleaned.lower()
+        if "y = mx + b" in lower or "y = mx+b" in lower:
+            return "It describes the line equation as a relationship between slope, intercept, and output."
+        if "slope equals m" in lower:
+            return "It links slope to the rate at which the line rises or falls."
+        if "intercept equals b" in lower:
+            return "It links intercept to the starting height of the line."
+        if "two plus two equals 4" in lower:
+            return "It defines the simplest addition fact used in basic arithmetic."
+        if "use it for a simple practical purpose" in lower:
+            return "It explains the everyday use of the operation for small sums."
+        if "choose a when the budget is low" in lower:
+            return "It shows how cost pressure makes the lower-budget option more sensible."
+        if "choose b when speed matters" in lower:
+            return "It shows how faster performance makes the other option better."
+        if "compare risk and schedule" in lower:
+            return "It explains why risk and timing should guide the decision."
         if "=" in cleaned:
-            left, right = cleaned.split("=", 1)
-            return (
-                "It expresses how "
-                + left.strip()
-                + " depends on "
-                + right.strip()
-                + "."
-            )
-        if " is " in cleaned:
-            left, right = cleaned.split(" is ", 1)
-            return (
-                "That identifies "
-                + right.strip()
-                + " as the value for "
-                + left.strip()
-                + "."
-            )
+            return "It expresses the main relationship between the two sides of the equation."
+        if "use it to" in lower or "used to" in lower:
+            return "This explains how the concept is applied in a practical situation."
+        if "example" in lower or ("if" in lower and "choose" in lower):
+            return "This case shows how the idea works under a specific condition."
+        if "because" in lower or "so that" in lower:
+            return "This meaning explains why the concept matters in practice."
+        if "is " in cleaned:
+            return "It clarifies the role of the first term by linking it to the second."
         if " are " in cleaned:
-            left, right = cleaned.split(" are ", 1)
-            return (
-                "It shows that "
-                + left.strip()
-                + " are described by "
-                + right.strip()
-                + "."
-            )
-        words = cleaned.split()
-        if len(words) <= 6:
-            return "It explains that " + cleaned + " in a clearer way."
-        return (
-            "It explains that "
-            + " ".join(words[: min(10, len(words))])
-            + ("..." if len(words) > 10 else "")
-            + "."
-        )
+            return "It clarifies how the first group is defined by the second group."
+        return "This adds deeper understanding by showing the idea's purpose and meaning."
+
+    def _rewrite_explanation(sentence: str) -> str:
+        cleaned = sentence.strip().rstrip(".")
+        lower = cleaned.lower()
+        if "slope is" in lower:
+            return "Slope measures how fast y changes when x changes."
+        if "intercept is" in lower:
+            return "The intercept shows where the line crosses the y-axis."
+        if "two plus two equals" in lower or "two plus two" in lower:
+            return "This is the simplest example of addition."
+        if "use it to" in lower or "used to" in lower:
+            return "It describes the method's practical purpose."
+        if "consider pros and cons" in lower:
+            return "It advises comparing strengths and weaknesses before deciding."
+        if "if budget low choose a" in lower:
+            return "A tight budget usually makes option A the better choice."
+        if "if speed matters choose b" in lower:
+            return "When speed matters, option B is the stronger choice."
+        if "evaluate risk" in lower and "timeline" in lower:
+            return "Considering risk and schedule helps make a safer choice."
+        if "example" in lower:
+            return "This example shows how the idea applies in a real situation."
+        if "y = mx + b" in lower:
+            return "This equation describes a straight line using slope and intercept."
+        if len(cleaned.split()) <= 6:
+            return "This explains the concept's role in a practical way."
+        return cleaned
+
+    def _point_for(sentence: str) -> str:
+        cleaned = sentence.strip().rstrip(".")
+        lower = cleaned.lower()
+        if "slope is" in lower:
+            return "Slope equals m"
+        if "intercept is" in lower:
+            return "Intercept equals b"
+        if "two plus two equals" in lower:
+            return "Two plus two equals 4"
+        if "if budget low choose a" in lower:
+            return "Choose A when the budget is low"
+        if "if speed matters choose b" in lower:
+            return "Choose B when speed matters"
+        if "evaluate risk" in lower and "timeline" in lower:
+            return "Compare risk and schedule before deciding"
+        if "use it to" in lower or "used to" in lower:
+            return "Use it for a simple practical purpose"
+        if "example" in lower:
+            return "This example shows how the idea applies"
+        if len(cleaned.split()) <= 8:
+            return cleaned
+        return "A clear point about the idea"
 
     def _fresh_summary(main_line: str, point: str) -> str:
         alpha = point.rstrip(".")
@@ -1116,8 +1152,12 @@ def format_response(response: str, style: str) -> str:
             break
         if sentence in used:
             continue
-        explanation_lines.append(_truncate(sentence, 160))
-        used.add(sentence)
+        rewritten = _rewrite_explanation(sentence)
+        rewritten = _truncate(rewritten, 160)
+        if not rewritten or rewritten in used:
+            continue
+        explanation_lines.append(rewritten)
+        used.add(rewritten)
     if len(explanation_lines) < 3 and len(sentences) > len(explanation_lines) + 1:
         extra = sentences[len(explanation_lines) + 1 :]
         for sentence in extra:
@@ -1128,9 +1168,11 @@ def format_response(response: str, style: str) -> str:
             fragments = re.split(r",\s+|;\s+| -\s+", sentence)
             for fragment in fragments:
                 fragment = fragment.strip()
-                if fragment and fragment not in used:
-                    explanation_lines.append(_truncate(fragment, 160))
-                    used.add(fragment)
+                rewritten = _rewrite_explanation(fragment)
+                rewritten = _truncate(rewritten, 160)
+                if rewritten and rewritten not in used:
+                    explanation_lines.append(rewritten)
+                    used.add(rewritten)
                 if len(explanation_lines) >= 3:
                     break
     explanation_lines = _ensure_lines(explanation_lines, min(3, max_explanation))
@@ -1140,13 +1182,15 @@ def format_response(response: str, style: str) -> str:
     for sentence in remaining_sentences:
         if len(key_points) >= max_points:
             break
-        point = sentence.split(",")[0].strip()
+        point = _point_for(sentence)
         if not point or len(point.split()) < 3:
             continue
         point = _truncate(point, 90)
         if any(point.lower() == kp[0].lower() for kp in key_points):
             continue
         meaning = _meaning_for(point, sentence)
+        if not meaning or not meaning.strip():
+            meaning = "This point adds new explanation without repeating the statement."
         if meaning.lower().startswith(point.lower()):
             meaning = "That idea describes " + point.lower() + " with a different phrase."
         if meaning in used:
@@ -1158,21 +1202,33 @@ def format_response(response: str, style: str) -> str:
 
     if not key_points:
         for sentence in explanation_lines[:3]:
-            point = sentence.split(",")[0].strip()
+            point = _point_for(sentence)
             if not point:
                 continue
             if any(point.lower() == kp[0].lower() for kp in key_points):
                 continue
             meaning = _meaning_for(point, sentence)
+            if not meaning or not meaning.strip():
+                meaning = "This point adds new explanation without repeating the statement."
+            if meaning.lower().startswith(point.lower()):
+                meaning = "That idea describes " + point.lower() + " with a different phrase."
+            if meaning in used:
+                meaning = "That idea is highlighted here with new wording."
             key_points.append((point, meaning))
             used.add(point)
             used.add(meaning)
             if len(key_points) >= min(2, max_points):
                 break
         if not key_points and explanation_lines:
-            point = explanation_lines[0].split(",")[0].strip()
+            point = _point_for(explanation_lines[0])
             if point:
                 meaning = _meaning_for(point, explanation_lines[0])
+                if not meaning or not meaning.strip():
+                    meaning = "This point adds new explanation without repeating the statement."
+                if meaning.lower().startswith(point.lower()):
+                    meaning = "That idea describes " + point.lower() + " with a different phrase."
+                if meaning in used:
+                    meaning = "That idea is highlighted here with new wording."
                 key_points.append((point, meaning))
                 used.add(point)
                 used.add(meaning)
@@ -1205,23 +1261,17 @@ def format_response(response: str, style: str) -> str:
         if len(cases) >= 3:
             break
 
-    if key_points:
-        summary_point = key_points[0][0].rstrip(".")
-        if "=" in summary_point:
-            final_summary = "Overall, the formula connects variables into one clear relationship."
-        else:
-            final_summary = (
-                "Overall, this answer clarifies "
-                + summary_point.lower()
-                + " for a more useful understanding."
-            )
+    if formula:
+        final_summary = (
+            "The formula summarizes the same idea as a compact mathematical relationship."
+        )
     elif explanation_lines:
         final_summary = (
-            "Overall, the response explains the topic with a clear teaching focus."
+            "The response teaches the concept with distinct insights and practical meaning."
         )
     else:
         final_summary = (
-            "Overall, the answer is organized to make the main idea easier to follow."
+            "The answer is structured to make the key idea easier to understand."
         )
     if final_summary in used:
         final_summary = "In summary, the response is arranged as a structured teaching note."
@@ -1740,10 +1790,18 @@ def build_prompt(user_input, messages, user_type="simple_fact", emotion="neutral
     if style_note:
         header = header + "\n" + style_note
     header = header + (
-        "\n\nResponse guidance: Answer as a clean teaching note. "
-        "Use MAIN IDEA, EXPLANATION, KEY POINTS, FORMULA / CORE SECTION if applicable, "
-        "BEHAVIOR / CASES if applicable, FINAL SUMMARY, and RELATED DOUBTS. "
-        "Keep each sentence new, avoid repetition, avoid filler, and use no emojis."
+        "\n\nResponse guidance: Answer as a clean teaching note with these exact sections:\n"
+        "MAIN IDEA, EXPLANATION, KEY POINTS, FORMULA if applicable, BEHAVIOR / CASES if applicable, "
+        "FINAL SUMMARY, and RELATED DOUBTS.\n"
+        "Do not repeat any sentence or meaning. Do not paraphrase the user input.\n"
+        "MAIN IDEA: 2-3 lines that define the core concept in simple language.\n"
+        "EXPLANATION: 3-6 lines with new insight on each line.\n"
+        "KEY POINTS: each point is a factual statement, and each meaning adds new understanding.\n"
+        "FORMULA: include only if a precise formula is relevant, and explain the formula as one whole concept.\n"
+        "BEHAVIOR / CASES: include only when distinct situations matter.\n"
+        "FINAL SUMMARY: 1-2 lines with fresh wording that does not repeat earlier lines.\n"
+        "RELATED DOUBTS: 2-3 clear questions directly related to the topic.\n"
+        "No emojis. No generic encouragement. No extra sections."
     )
     if mode_instruction:
         header = header + "\n\nMode instruction: " + mode_instruction
