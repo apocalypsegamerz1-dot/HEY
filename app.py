@@ -929,6 +929,139 @@ EMOTION_INSTRUCTIONS = {
     "neutral": "User is neutral. Use a normal helpful tone.",
 }
 
+STYLE_INSTRUCTIONS = {
+    "direct": "Response style is direct. Keep answer to 1-2 lines.",
+    "short": "Response style is short. Use exactly 3 clear lines.",
+    "medium": "Response style is medium. Use 3-4 simple lines.",
+    "detailed": "Response style is detailed. Use 6-8 lines with spacing.",
+    "long": "Response style is long. Use 4-6 bullet lines with practical steps.",
+}
+
+
+def get_style(user_type: str, user_input: str) -> str:
+    normalized = user_input.strip().lower()
+    if "in detail" in normalized or "explain deeply" in normalized:
+        return "detailed"
+    if user_type == "logic_calculation":
+        return "direct"
+    if user_type in ("logic_concept", "learning"):
+        return "medium"
+    if user_type == "simple_fact":
+        return "short"
+    if user_type in ("real_life_decision", "real_life_problem"):
+        return "long"
+    return "short"
+
+
+def _split_sentences(text: str) -> list:
+    text = text.strip()
+    if not text:
+        return []
+    parts = re.split(r'(?<=[.!?])\s+', text)
+    return [part.strip() for part in parts if part.strip()]
+
+
+def _limit_emojis(text: str) -> str:
+    emoji_pattern = re.compile(r"[🤔🧠🤝😤🚀⚡🔹]")
+    count = 0
+    def keep_first_three(match):
+        nonlocal count
+        count += 1
+        return match.group(0) if count <= 3 else ""
+    return emoji_pattern.sub(keep_first_three, text)
+
+
+def _remove_emoji_spam_end(text: str) -> str:
+    return re.sub(r'([🤔🧠🤝😤🚀⚡🔹]{4,})+$', '', text).strip()
+
+
+def _normalize_text(text: str) -> str:
+    text = text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    text = re.sub(r"\n\s*\n+", "\n", text)
+    text = _remove_emoji_spam_end(text)
+    text = _limit_emojis(text)
+    return text
+
+
+def _ensure_lines(lines: list, min_lines: int) -> list:
+    if len(lines) >= min_lines:
+        return lines
+    expanded = []
+    for line in lines:
+        if len(expanded) >= min_lines:
+            break
+        if len(expanded) + 1 < min_lines and len(line) > 60:
+            split_point = line.rfind(" ", 0, len(line) // 2)
+            if split_point <= 0:
+                split_point = len(line) // 2
+            expanded.append(line[:split_point].strip())
+            expanded.append(line[split_point:].strip())
+        else:
+            expanded.append(line)
+    if len(expanded) < min_lines and len(expanded) == 1:
+        sentences = _split_sentences(expanded[0])
+        expanded = sentences[:min_lines]
+    return expanded[:min_lines]
+
+
+def format_response(response: str, style: str) -> str:
+    if not isinstance(response, str):
+        return response
+    text = _normalize_text(response)
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
+    if not lines:
+        return text
+
+    if style == "direct":
+        if len(lines) > 2:
+            return "\n".join(lines[:2])
+        if len(lines) == 1:
+            sentences = _split_sentences(lines[0])
+            return "\n".join(sentences[:2])
+        return "\n".join(lines)
+
+    if style == "short":
+        if len(lines) >= 3:
+            return "\n".join(lines[:3])
+        lines = _ensure_lines(lines, 3)
+        return "\n".join(lines[:3])
+
+    if style == "medium":
+        if len(lines) >= 3:
+            return "\n".join(lines[:4])
+        lines = _ensure_lines(lines, 3)
+        return "\n".join(lines[:4])
+
+    if style == "detailed":
+        if len(lines) < 6:
+            sentences = []
+            for line in lines:
+                sentences.extend(_split_sentences(line))
+            lines = sentences
+        lines = _ensure_lines(lines, 6)
+        lines = lines[:8]
+        return "\n\n".join(lines)
+
+    if style == "long":
+        bullets = []
+        for line in lines:
+            if len(bullets) >= 6:
+                break
+            sentence_parts = _split_sentences(line)
+            if sentence_parts:
+                for part in sentence_parts:
+                    if len(bullets) >= 6:
+                        break
+                    bullets.append(part)
+            else:
+                bullets.append(line)
+        bullets = bullets[:6]
+        bullets = _ensure_lines(bullets, 4)
+        bullets = [f"🔹 {line}" if not line.startswith("🔹") else line for line in bullets]
+        return "\n".join(bullets)
+
+    return text
+
 
 def detect_intent(user_input: str) -> str:
     normalized = user_input.strip().lower()
@@ -1315,7 +1448,7 @@ OWNER_ACCOUNT_ID = "owner_account"
 OWNER_USERNAME = "Reyaansh Sharma"
 OWNER_PASSWORD = "12345"
 
-def build_prompt(user_input, messages, user_type="simple_fact", emotion="neutral"):
+def build_prompt(user_input, messages, user_type="simple_fact", emotion="neutral", style="short"):
     # Use only the latest user message and the assistant's last answer to speed up prompt processing.
     last_user = None
     last_assistant = None
@@ -1337,6 +1470,7 @@ def build_prompt(user_input, messages, user_type="simple_fact", emotion="neutral
 
     type_note = TYPE_INSTRUCTIONS.get(user_type, "Detected type is simple_fact. Answer in exactly 3 lines.")
     emotion_note = EMOTION_INSTRUCTIONS.get(emotion, EMOTION_INSTRUCTIONS["neutral"])
+    style_note = STYLE_INSTRUCTIONS.get(style, "")
 
     if st.session_state.user_role == "developer" and st.session_state.dev_system_prompt:
         header = (
@@ -1348,6 +1482,8 @@ def build_prompt(user_input, messages, user_type="simple_fact", emotion="neutral
         header = SYSTEM_INSTRUCTION
     
     header = header + "\n\n" + type_note + "\n" + emotion_note
+    if style_note:
+        header = header + "\n" + style_note
     if mode_instruction:
         header = header + "\n\nMode instruction: " + mode_instruction
     if user_context:
@@ -1808,10 +1944,18 @@ def process_pending_response():
     with st.spinner("HEY is typing..."):
         detected_type = detect_intent(user_prompt_text)
         emotion = detect_emotion(user_prompt_text)
+        style = get_style(detected_type, user_prompt_text)
         print("Detected type:", detected_type)
         print("Detected emotion:", emotion)
+        print("Detected style:", style)
         try:
-            prompt = build_prompt(user_prompt_text, active_chats[st.session_state.active_chat]["messages"], user_type=detected_type, emotion=emotion)
+            prompt = build_prompt(
+                user_prompt_text,
+                active_chats[st.session_state.active_chat]["messages"],
+                user_type=detected_type,
+                emotion=emotion,
+                style=style,
+            )
             assistant_response, api_response = generate_answer(
                 prompt,
                 stream=False,
@@ -1824,6 +1968,7 @@ def process_pending_response():
                 assistant_text = extracted or "API returned no text, but the request was processed."
             else:
                 assistant_text = "No response from AI. Please try again."
+            assistant_text = format_response(assistant_text, style)
         except Exception as e:
             err_text = str(e)
             if "Quota exceeded" in err_text or "generate_content_free_tier_requests" in err_text:
