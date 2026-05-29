@@ -1005,120 +1005,125 @@ def _ensure_lines(lines: list, min_lines: int) -> list:
 
 
 def format_response(response: str, style: str) -> str:
-    # HEY rewrite engine: strict formatting after generation
+    # HEY strict structured formatter
     if not isinstance(response, str):
         return response
 
     text = _normalize_text(response)
     sentences = []
-    for part in text.split("\n"):
+    for part in re.split(r"\n+", text):
         sentences.extend(_split_sentences(part))
     sentences = [s.strip() for s in sentences if s.strip()]
 
-    # helper to take N sentences safely
-    def take_n(n):
-        return sentences[:n] if sentences else [text]
+    # 1) TITLE / MAIN IDEA
+    title = sentences[0] if sentences else "Answer"
+    if len(title) > 140:
+        title = title[:137].rsplit(" ", 1)[0] + "..."
 
-    # emotion -> emoji map (used sparingly)
-    EMOJI_MAP = {
-        "confused": "🤔",
-        "stressed": "🧠",
-        "sad": "🤝",
-        "frustrated": "😤",
-        "excited": "🚀",
-        "neutral": ""
-    }
+    # 2) EXPLANATION (2-3 lines)
+    explanation = sentences[1:4]
+    if len(explanation) < 2 and len(sentences) > 1:
+        parts = re.split(r",\s+|;\s+| -\s+", sentences[1]) if len(sentences) > 1 else []
+        explanation = parts[:2]
+    explanation = explanation[:3]
 
-    # Hook: strong first line (use first sentence truncated)
-    hook = sentences[0] if sentences else text
-    if len(hook) > 120:
-        hook = hook[:117].rsplit(" ", 1)[0] + "..."
+    # Remaining sentences for key points / other sections
+    used_count = 1 + len(explanation)
+    remaining = sentences[used_count:]
 
-    body = []
-    if style == "direct":
-        chosen = take_n(2)
-        body = [s for s in chosen]
-        target_min, target_max = 1, 2
+    # 3) KEY POINTS SECTION (select up to 5 key points)
+    key_points = []
+    if remaining:
+        for s in remaining:
+            if len(key_points) >= 5:
+                break
+            if s and s not in key_points and s not in explanation and s != title:
+                key_points.append(s)
+    if not key_points:
+        for s in explanation:
+            if len(key_points) >= 3:
+                break
+            key_points.append(s)
 
-    elif style == "short":
-        chosen = take_n(5)
-        body = [s for s in chosen[:5]]
-        target_min, target_max = 3, 5
+    bullets_with_meaning = []
+    for bp in key_points:
+        words = bp.split()
+        short = " ".join(words[:18]) + ("..." if len(words) > 18 else "")
+        meaning = f"→ This means {short}"
+        bullets_with_meaning.append((bp, meaning))
 
-    elif style == "medium":
-        chosen = take_n(15)
-        body = [s for s in chosen[:15]]
-        target_min, target_max = 8, 15
+    # 4) FORMULA / CORE LOGIC (if applicable)
+    formula_section = []
+    formula_match = re.search(r"([A-Za-z0-9_\)\(\s\+\-\*\/=\.\^%]+=[A-Za-z0-9_\)\(\s\+\-\*\/=\.\^%]+)", text)
+    if formula_match:
+        formula = formula_match.group(1).strip()
+        formula_section.append(formula)
+        parts = re.split(r"(\+|\-|\*|/|=|\^|%)", formula)
+        for part in parts:
+            p = part.strip()
+            if not p:
+                continue
+            if p in "+-*/=^%":
+                meaning = f"{p} — This is the operator '{p}' used in the formula."
+            else:
+                meaning = f"{p} — This represents '{p}' in the formula."
+            formula_section.append(meaning)
 
-    elif style in ("detailed", "long"):
-        # For long/detailed, prefer bulletized steps
-        chosen = take_n(25)
-        bullets = [f"🔹 {s}" for s in chosen[:25]]
-        # If too few bullets, split longer sentences
-        if len(bullets) < 6 and sentences:
-            more = []
-            for s in sentences:
-                if len(more) >= 25:
-                    break
-                parts = re.split(r",\s+|;\s+| -\s+", s)
-                more.extend([p.strip() for p in parts if p.strip()])
-            bullets = [f"🔹 {s}" for s in more[:25]]
-        body = bullets
-        target_min, target_max = 15, 25
+    # 5) BEHAVIOR / CASES (if applicable)
+    cases = []
+    for s in remaining:
+        lowered = s.lower()
+        if any(term in lowered for term in ["example", "when", "if", "case", "positive", "negative", "instead", "otherwise"]):
+            words = s.split()
+            short = " ".join(words[:28]) + ("..." if len(words) > 28 else "")
+            cases.append((s, f"→ This means {short}"))
+        if len(cases) >= 4:
+            break
 
+    # 6) FINAL SUMMARY (1-2 lines)
+    final_summary = title if title else (sentences[0] if sentences else "Summary")
+    final_summary_short = final_summary if len(final_summary.split()) <= 20 else " ".join(final_summary.split()[:20]) + "..."
+
+    # Assemble the mandated structure with clear spacing
+    output = []
+    output.append(title)
+    output.append("")
+    if explanation:
+        for ex in explanation[:3]:
+            output.append(ex)
     else:
-        body = take_n(8)
-        target_min, target_max = 8, 15
+        output.append("No further explanation available.")
+    output.append("")
+    output.append("Key points:")
+    for bp, meaning in bullets_with_meaning:
+        output.append(f"- {bp}")
+        output.append(meaning)
+    output.append("")
+    if formula_section:
+        output.append("Formula / Core logic:")
+        for line in formula_section:
+            output.append(line)
+        output.append("")
+    if cases:
+        output.append("Behavior / Cases:")
+        for case, meaning in cases:
+            output.append(f"- {case}")
+            output.append(meaning)
+        output.append("")
+    output.append("Final summary:")
+    output.append(final_summary_short)
 
-    # Ensure body has at least target_min lines (expand if needed)
-    if len(body) < target_min:
-        extra = sentences[len(body):len(body) + (target_min - len(body))]
-        if style in ("detailed", "long"):
-            body.extend([f"🔹 {s}" for s in extra])
-        else:
-            body.extend(extra)
+    # Ensure no emojis (user requested none unless explicitly asked)
+    cleaned = [re.sub(r"[\U0001F300-\U0001F6FF\U0001F900-\U0001F9FF\U0001F1E0-\U0001F1FF]", "", ln).strip() for ln in output]
+    compact = []
+    last = None
+    for ln in cleaned:
+        if ln == last and ln == "":
+            continue
+        compact.append(ln)
+        last = ln
 
-    # Build ending: 2-3 lines (conclusion, takeaway, optional insight)
-    conclusion = ""
-    takeaway = ""
-    insight = ""
-    if len(sentences) >= 2:
-        conclusion = sentences[min(1, len(sentences)-1)]
-    else:
-        conclusion = hook
-    takeaway = f"Takeaway: {sentences[-1]}" if sentences else "Takeaway: Keep this concise."
-    # optional insight: short, non-factual, safe
-    insight = "Quick tip: Focus on the next small step." if style in ("long", "detailed") else ""
-
-    # Assemble final lines respecting one-idea-per-line
-    emoji = EMOJI_MAP.get(st.session_state.get("detected_emotion", "neutral"), "")
-    final_lines = []
-    if emoji:
-        final_lines.append(f"{emoji} {hook}")
-    else:
-        final_lines.append(hook)
-
-    # add spacing between hook and body
-    for i, line in enumerate(body):
-        # ensure bullets remain as single lines
-        final_lines.append(line)
-
-    # spacing before ending
-    final_lines.append("")
-    final_lines.append(conclusion)
-    final_lines.append(takeaway)
-    if insight:
-        final_lines.append(insight)
-
-    # Clean up and ensure no dense paragraphs: one idea per line
-    cleaned = [ln.strip() for ln in final_lines if ln is not None]
-    # Remove duplicate adjacent lines
-    compact = [cleaned[0]] if cleaned else []
-    for ln in cleaned[1:]:
-        if ln and ln != compact[-1]:
-            compact.append(ln)
-
-    return "\n\n".join(compact)
+    return "\n\n".join(compact).strip()
 
 
 def detect_intent(user_input: str) -> str:
